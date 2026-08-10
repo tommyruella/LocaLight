@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
+    <title>Local Light</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <link rel="manifest" href="./manifest.json">
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+    <!-- Home Screen -->
+    <main id="home-screen" class="screen active">
+        <header class="home-header">
+            <h1>Local Light</h1>
+            <p>Premium Photo Editing, Zero Uploads.</p>
+        </header>
+        
+        <section class="home-actions">
+            <label class="primary-btn" for="file-input-home" id="btn-import-home">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                Import Photo
+            </label>
+            <input type="file" id="file-input-home" accept="image/jpeg, image/png, image/webp" class="hidden-input">
+        </section>
+
+        <section class="home-sections">
+            <div class="section-header">
+                <h2>Recent Projects</h2>
+            </div>
+            <div class="horizontal-scroll" id="recent-projects-list">
+                <div class="empty-state">No recent projects</div>
+            </div>
+
+            <div class="section-header">
+                <h2>Saved Presets</h2>
+            </div>
+            <div class="horizontal-scroll" id="saved-presets-list">
+                <div class="empty-state">No saved presets</div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Editor Workspace -->
+    <main id="editor-workspace" class="screen">
+        <header class="editor-header">
+            <button class="icon-btn" id="btn-back">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+            </button>
+            <div class="header-actions">
+                <button class="icon-btn" id="btn-undo"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"></path><path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13"></path></svg></button>
+                <button class="icon-btn" id="btn-compare"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg></button>
+                <button class="icon-btn" id="btn-export"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg></button>
+            </div>
+        </header>
+        
+        <div class="canvas-container">
+            <canvas id="main-canvas"></canvas>
+        </div>
+        
+        <div class="bottom-ui">
+            <!-- Floating Sliders Panel -->
+            <div class="sliders-panel" id="panel-light">
+                <div class="panel-header">
+                    <h3>Light</h3>
+                    <button class="info-btn"><svg class="collapse-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+                </div>
+                <div class="sliders-list">
+                    <div class="slider-group">
+                        <div class="slider-info">
+                            <span>Exposure</span>
+                            <span class="val-display">0%</span>
+                        </div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_exposure">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info">
+                            <span>Contrast</span>
+                            <span class="val-display">0%</span>
+                        </div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_contrast">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info">
+                            <span>Cinematic Contrast</span>
+                            <span class="val-display">0%</span>
+                        </div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_cinematic_contrast">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info">
+                            <span>Highlights</span>
+                            <span class="val-display">0%</span>
+                        </div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_highlights">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info">
+                            <span>Shadows</span>
+                            <span class="val-display">0%</span>
+                        </div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_shadows">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info">
+                            <span>Whites</span>
+                            <span class="val-display">0%</span>
+                        </div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_whites">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info">
+                            <span>Blacks</span>
+                            <span class="val-display">0%</span>
+                        </div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_blacks">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Color Panel -->
+            <div class="sliders-panel" id="panel-color" style="display: none;">
+                <div class="panel-header">
+                    <h3>Color</h3>
+                    <button class="info-btn"><svg class="collapse-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+                </div>
+                <div class="sliders-list">
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Saturation</span><span class="val-display">0%</span></div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_saturation">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Vibrance</span><span class="val-display">0%</span></div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_vibrance">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Cinematic Saturation</span><span class="val-display">0%</span></div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_cinematic_saturation">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Details Panel -->
+            <div class="sliders-panel" id="panel-details" style="display: none;">
+                <div class="panel-header">
+                    <h3>Details</h3>
+                    <button class="info-btn"><svg class="collapse-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+                </div>
+                <div class="sliders-list">
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Sharpness</span><span class="val-display">0%</span></div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_sharpness">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Clarity</span><span class="val-display">0%</span></div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_clarity">
+                    </div>
+                </div>
+            </div>
+
+            <!-- LUTs Panel -->
+            <div class="sliders-panel" id="panel-luts" style="display: none;">
+                <div class="panel-header">
+                    <h3>LUTs</h3>
+                    <button class="info-btn"><svg class="collapse-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+                </div>
+                <div class="sliders-list">
+                    <label class="primary-btn" for="lut-input" style="justify-content: center; width: 100%;">
+                        Load .cube LUT
+                    </label>
+                    <input type="file" id="lut-input" accept=".cube" class="hidden-input">
+                    
+                    <div class="slider-group" style="margin-top: 16px;">
+                        <div class="slider-info"><span>Intensity</span><span class="val-display">0%</span></div>
+                        <input type="range" min="0" max="100" value="0" class="custom-slider" data-uniform="u_lut_intensity">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Wheels Panel -->
+            <div class="sliders-panel" id="panel-wheels" style="display: none;">
+                <div class="panel-header" style="justify-content: center; cursor: pointer;">
+                    <h3 id="wheel-current-name" style="margin: 0;">Lift</h3>
+                </div>
+                <div class="sliders-list" style="position: relative;">
+                    
+                    <button class="icon-btn" id="btn-wheel-prev" style="position: absolute; left: -16px; top: 65px; z-index: 100; color: white;">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    </button>
+                    
+                    <button class="icon-btn" id="btn-wheel-next" style="position: absolute; right: -16px; top: 65px; z-index: 100; color: white;">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    </button>
+
+                    <div class="wheel-group" id="wg-lift">
+                        <div class="color-wheel-container" id="wheel-lift" data-uniform="u_lift" style="margin-top: 4px;">
+                            <div class="color-wheel-thumb"></div>
+                        </div>
+                        <div class="slider-group" style="margin-top: 24px; width: 100%;">
+                            <div class="slider-info"><span>Luminance</span><span class="val-display">0%</span></div>
+                            <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_lift_lum">
+                        </div>
+                    </div>
+
+                    <div class="wheel-group" id="wg-gamma" style="display: none;">
+                        <div class="color-wheel-container" id="wheel-gamma" data-uniform="u_gamma" style="margin-top: 4px;">
+                            <div class="color-wheel-thumb"></div>
+                        </div>
+                        <div class="slider-group" style="margin-top: 24px; width: 100%;">
+                            <div class="slider-info"><span>Luminance</span><span class="val-display">0%</span></div>
+                            <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_gamma_lum">
+                        </div>
+                    </div>
+
+                    <div class="wheel-group" id="wg-gain" style="display: none;">
+                        <div class="color-wheel-container" id="wheel-gain" data-uniform="u_gain" style="margin-top: 4px;">
+                            <div class="color-wheel-thumb"></div>
+                        </div>
+                        <div class="slider-group" style="margin-top: 24px; width: 100%;">
+                            <div class="slider-info"><span>Luminance</span><span class="val-display">0%</span></div>
+                            <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_gain_lum">
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- WB Panel -->
+            <div class="sliders-panel" id="panel-wb" style="display: none;">
+                <div class="panel-header">
+                    <h3>White Balance</h3>
+                    <button class="info-btn"><svg class="collapse-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+                </div>
+                <div class="sliders-list">
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Temperature</span><span class="val-display">0%</span></div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_temperature">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Tint</span><span class="val-display">0%</span></div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider" data-uniform="u_tint">
+                    </div>
+                </div>
+            </div>
+            <!-- Color Mix Panel -->
+            <div class="sliders-panel" id="panel-mix" style="display: none;">
+                <div class="panel-header">
+                    <h3>Color Mix</h3>
+                    <button class="info-btn"><svg class="collapse-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+                </div>
+                <div class="sliders-list">
+                    <div class="color-picker-row" id="mix-color-picker">
+                        <div class="color-dot active" data-color-index="0" style="background-color: #ff3333;"></div>
+                        <div class="color-dot" data-color-index="1" style="background-color: #ff9933;"></div>
+                        <div class="color-dot" data-color-index="2" style="background-color: #ffff33;"></div>
+                        <div class="color-dot" data-color-index="3" style="background-color: #33ff33;"></div>
+                        <div class="color-dot" data-color-index="4" style="background-color: #33ffff;"></div>
+                        <div class="color-dot" data-color-index="5" style="background-color: #3333ff;"></div>
+                        <div class="color-dot" data-color-index="6" style="background-color: #9933ff;"></div>
+                        <div class="color-dot" data-color-index="7" style="background-color: #ff33ff;"></div>
+                    </div>
+                    
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Hue</span><span class="val-display">0%</span></div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider mix-slider" id="mix-hue-slider" data-type="h">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Saturation</span><span class="val-display">0%</span></div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider mix-slider" id="mix-sat-slider" data-type="s">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Luminance</span><span class="val-display">0%</span></div>
+                        <input type="range" min="-100" max="100" value="0" class="custom-slider mix-slider" id="mix-lum-slider" data-type="l">
+                    </div>
+                </div>
+            </div>
+
+            <div class="menus-container">
+                <!-- Sub-category tabs -->
+                <div class="sub-nav">
+                    <button class="sub-nav-btn active">Light</button>
+                    <button class="sub-nav-btn">Color</button>
+                    <button class="sub-nav-btn">Mix</button>
+                    <button class="sub-nav-btn">WB</button>
+                    <button class="sub-nav-btn">Details</button>
+                    <button class="sub-nav-btn">Wheels</button>
+                    <button class="sub-nav-btn">LUTs</button>
+                </div>
+
+                <!-- Main tool icons -->
+                <nav class="main-nav">
+                    <button class="main-nav-btn active">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+                    </button>
+                    <button class="main-nav-btn">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                    </button>
+                    <button class="main-nav-btn">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                    </button>
+                    <button class="main-nav-btn">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
+                    </button>
+                    <button class="main-nav-btn">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+                    </button>
+                </nav>
+            </div>
+        </div>
+    </main>
+    <script src="./engine.js?v=2" type="module"></script>
+    <script src="./app.js?v=2" type="module"></script>
+</body>
+</html>
