@@ -998,8 +998,11 @@ async function executeExport() {
     const modal = document.getElementById('export-modal');
     if (modal) modal.classList.remove('active');
     
-    // Native Web Share API (iOS Safari / Mobile System Share Sheet)
-    if (navigator.share) {
+    const isMobileOrIOS = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || 
+                          (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /Macintosh/i.test(navigator.userAgent));
+    
+    // 1. Mobile / iOS -> Use Native Mobile System Share Sheet ("Salva in Foto" / Instagram / AirDrop)
+    if (isMobileOrIOS && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
             await navigator.share({
                 files: [file],
@@ -1007,12 +1010,11 @@ async function executeExport() {
             });
             return;
         } catch (err) {
-            // User closed share sheet
             if (err.name === 'AbortError') return;
         }
     }
     
-    // Desktop Fallback (Blob URL download without data: tab)
+    // 2. Mac / PC / Desktop -> Direct 1-Click Save directly to Downloads folder!
     const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.download = filename;
