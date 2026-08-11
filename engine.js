@@ -162,13 +162,27 @@ export class LocalLightEngine {
             float preLum = getLuminance(color);
             
             // --- DaVinci Intermediate Film Curve (DWG/DI Log S-Curve) ---
-            vec3 diColor = linearToDI(color);
-            
-            // 1. Film Contrast (S-Curve centered at 0.5 log space for symmetric balance)
             if (u_cinematic_contrast != 0.0) {
-                float factor = 1.0 + u_cinematic_contrast * 0.76;
-                diColor = (diColor - 0.5) * factor + 0.5;
+                float origLum = getLuminance(color);
+                float diLum = linearToDI(origLum);
+                
+                // DaVinci Intermediate S-Curve in log space
+                float factor = 1.0 + u_cinematic_contrast * 0.55;
+                diLum = (diLum - 0.5) * factor + 0.5;
+                float newLum = DIToLinear(diLum);
+                
+                if (origLum > 0.0001) {
+                    vec3 adjustedColor = color * (newLum / origLum);
+                    // 85% Luminance contrast (zero color shift) + 15% RGB contrast for filmic character
+                    vec3 diColorRGB = linearToDI(color);
+                    diColorRGB = (diColorRGB - 0.5) * factor + 0.5;
+                    vec3 rgbContrast = DIToLinear(diColorRGB);
+                    
+                    color = mix(adjustedColor, rgbContrast, 0.15);
+                }
             }
+            
+            vec3 diColor = linearToDI(color);
             
             // 2. Shadow Toe (Shapes shadow toe: lift to fade blacks, lower to crush)
             if (u_shadow_toe != 0.0) {
@@ -195,12 +209,12 @@ export class LocalLightEngine {
             
             color = clamp(DIToLinear(diColor), 0.0, 1.0);
             
-            // LUMINANCE LOCK: Force total average image brightness to remain 100% constant
+            // 100% HARD LUMINANCE LOCK: Force total average image brightness to remain 100% constant
             if (u_cinematic_contrast != 0.0) {
                 float postLum = getLuminance(color);
                 if (postLum > 0.001 && preLum > 0.001) {
                     float lumRatio = preLum / postLum;
-                    color = clamp(color * mix(1.0, lumRatio, 0.75), 0.0, 1.0);
+                    color = clamp(color * lumRatio, 0.0, 1.0);
                 }
             }
             
