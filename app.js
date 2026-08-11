@@ -1378,12 +1378,6 @@ function setupGestureZoom() {
         zoomState.scale = zoomState.scale * (1.0 + delta);
         applyTransform();
     }, { passive: false });
-    
-    // 4. Double Click / Double Tap Reset
-    container.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        resetZoomAndPan();
-    });
 }
 
 window.addEventListener('load', () => {
