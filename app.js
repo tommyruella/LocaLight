@@ -1271,10 +1271,10 @@ function setupHistory() {
     }
 }
 
-// Side Zoom Wheel & Pan/Pinch Controller
+// Native Touch Pinch-to-Zoom, Mouse Wheel / Trackpad Zoom, Pan & Double Click Reset
 let zoomState = {
     scale: 1.0,
-    minScale: 0.2, // Dezoom down to 20% for large desktop images!
+    minScale: 0.2, // Dezoom down to 20%
     maxScale: 5.0, // Zoom up to 500%
     panX: 0,
     panY: 0,
@@ -1283,81 +1283,67 @@ let zoomState = {
     startY: 0
 };
 
-function setupZoomWheel() {
+function setupGestureZoom() {
     const mainCanvas = document.getElementById('main-canvas');
-    const track = document.getElementById('zoom-wheel-track');
-    const thumb = document.getElementById('zoom-wheel-thumb');
-    const btnIn = document.getElementById('btn-zoom-in');
-    const btnOut = document.getElementById('btn-zoom-out');
-    const btnReset = document.getElementById('btn-zoom-reset');
+    const container = document.getElementById('canvas-container');
+    if (!mainCanvas || !container) return;
     
-    if (!mainCanvas || !track || !thumb) return;
-    
-    function applyZoom(newScale, updateWheelUI = true) {
-        zoomState.scale = Math.min(Math.max(newScale, zoomState.minScale), zoomState.maxScale);
-        
+    function applyTransform() {
+        zoomState.scale = Math.min(Math.max(zoomState.scale, zoomState.minScale), zoomState.maxScale);
         mainCanvas.style.transform = `translate(${zoomState.panX}px, ${zoomState.panY}px) scale(${zoomState.scale})`;
-        
-        if (btnReset) {
-            btnReset.textContent = `${Math.round(zoomState.scale * 100)}%`;
-        }
-        
-        if (updateWheelUI) {
-            // Map scale 0.2 -> 5.0 to track position 100% -> 0% (vertical slider)
-            const pct = 1.0 - ((zoomState.scale - zoomState.minScale) / (zoomState.maxScale - zoomState.minScale));
-            thumb.style.top = `${pct * 100}%`;
-        }
     }
     
     function resetZoomAndPan() {
         zoomState.scale = 1.0;
         zoomState.panX = 0;
         zoomState.panY = 0;
-        applyZoom(1.0, true);
+        applyTransform();
     }
     
-    // Track dragging / clicking for Zoom Wheel
-    let isWheelDragging = false;
-    
-    function handleWheelMove(e) {
-        const rect = track.getBoundingClientRect();
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-        let offsetY = clientY - rect.top;
-        offsetY = Math.min(Math.max(offsetY, 0), rect.height);
-        
-        const pct = 1.0 - (offsetY / rect.height);
-        const targetScale = zoomState.minScale + pct * (zoomState.maxScale - zoomState.minScale);
-        applyZoom(targetScale, false);
-        thumb.style.top = `${(1.0 - pct) * 100}%`;
-    }
-    
-    track.addEventListener('pointerdown', (e) => {
-        isWheelDragging = true;
-        track.setPointerCapture(e.pointerId);
-        handleWheelMove(e);
-    });
-    
-    track.addEventListener('pointermove', (e) => {
-        if (isWheelDragging) handleWheelMove(e);
-    });
-    
-    const stopWheelDrag = (e) => {
-        if (isWheelDragging) {
-            isWheelDragging = false;
-            try { track.releasePointerCapture(e.pointerId); } catch(err) {}
-        }
-    };
-    track.addEventListener('pointerup', stopWheelDrag);
-    track.addEventListener('pointercancel', stopWheelDrag);
-    
-    if (btnIn) btnIn.addEventListener('click', () => applyZoom(zoomState.scale + 0.4));
-    if (btnOut) btnOut.addEventListener('click', () => applyZoom(zoomState.scale - 0.4));
-    if (btnReset) btnReset.addEventListener('click', () => resetZoomAndPan());
-    
-    // 1. Universal Panning on Canvas (Click & Drag at any scale!)
+    // 1. Mouse Drag & Touch Pan
     mainCanvas.style.cursor = 'grab';
     
+    let initialPinchDist = 0;
+    let initialPinchScale = 1.0;
+    
+    container.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+            initialPinchDist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            initialPinchScale = zoomState.scale;
+        } else if (e.touches.length === 1) {
+            zoomState.isDragging = true;
+            zoomState.startX = e.touches[0].clientX - zoomState.panX;
+            zoomState.startY = e.touches[0].clientY - zoomState.panY;
+        }
+    }, { passive: true });
+    
+    container.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2 && initialPinchDist > 0) {
+            const dist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            const scaleFactor = dist / initialPinchDist;
+            zoomState.scale = initialPinchScale * scaleFactor;
+            applyTransform();
+        } else if (e.touches.length === 1 && zoomState.isDragging) {
+            zoomState.panX = e.touches[0].clientX - zoomState.startX;
+            zoomState.panY = e.touches[0].clientY - zoomState.startY;
+            applyTransform();
+        }
+    }, { passive: true });
+    
+    container.addEventListener('touchend', (e) => {
+        if (e.touches.length < 2) initialPinchDist = 0;
+        if (e.touches.length === 0) zoomState.isDragging = false;
+    });
+    
+    // 2. Mouse Drag Pan
     mainCanvas.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'touch') return;
         zoomState.isDragging = true;
         zoomState.startX = e.clientX - zoomState.panX;
         zoomState.startY = e.clientY - zoomState.panY;
@@ -1366,10 +1352,11 @@ function setupZoomWheel() {
     });
     
     mainCanvas.addEventListener('pointermove', (e) => {
+        if (e.pointerType === 'touch') return;
         if (zoomState.isDragging) {
             zoomState.panX = e.clientX - zoomState.startX;
             zoomState.panY = e.clientY - zoomState.startY;
-            applyZoom(zoomState.scale, false);
+            applyTransform();
         }
     });
     
@@ -1383,20 +1370,22 @@ function setupZoomWheel() {
     mainCanvas.addEventListener('pointerup', stopPan);
     mainCanvas.addEventListener('pointercancel', stopPan);
     
-    // 2. Double Click / Double Tap on Canvas -> General Reset (Reset Zoom & Pan to 100%)
-    mainCanvas.addEventListener('dblclick', (e) => {
+    // 3. Trackpad & Mouse Wheel Zoom
+    container.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const zoomSensitivity = e.ctrlKey ? 0.01 : 0.0025;
+        const delta = -e.deltaY * zoomSensitivity;
+        zoomState.scale = zoomState.scale * (1.0 + delta);
+        applyTransform();
+    }, { passive: false });
+    
+    // 4. Double Click / Double Tap Reset
+    container.addEventListener('dblclick', (e) => {
         e.preventDefault();
         resetZoomAndPan();
     });
-    
-    // Mouse wheel zoom over canvas
-    mainCanvas.parentElement.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        const delta = e.deltaY < 0 ? 0.15 : -0.15;
-        applyZoom(zoomState.scale + delta);
-    }, { passive: false });
 }
 
 window.addEventListener('load', () => {
-    setupZoomWheel();
+    setupGestureZoom();
 });
