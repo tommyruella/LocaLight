@@ -716,10 +716,32 @@ btnBack.addEventListener('click', () => {
     fileInputHome.value = '';
 });
 
-// Compare functionality (Hold to view original)
+// Compare functionality (Hold to view impact of LAST edit, or raw original if at start)
 const btnCompare = document.getElementById('btn-compare');
-const startCompare = () => { if (engine) engine.setBypass(true); };
-const stopCompare = () => { if (engine) engine.setBypass(false); };
+let stateBeforeCompare = null;
+
+const startCompare = () => {
+    if (!engine) return;
+    
+    if (historyIndex > 0 && historyStack[historyIndex - 1]) {
+        // Temporarily load previous history step to compare LAST edit impact!
+        stateBeforeCompare = captureCurrentState();
+        applyHistoryState(historyStack[historyIndex - 1]);
+    } else {
+        // At initial step: bypass engine to view original raw photo
+        engine.setBypass(true);
+    }
+};
+
+const stopCompare = () => {
+    if (!engine) return;
+    
+    if (stateBeforeCompare) {
+        applyHistoryState(stateBeforeCompare);
+        stateBeforeCompare = null;
+    }
+    engine.setBypass(false);
+};
 
 btnCompare.addEventListener('mousedown', startCompare);
 btnCompare.addEventListener('touchstart', startCompare, { passive: true });
