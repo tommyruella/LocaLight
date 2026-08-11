@@ -1274,8 +1274,8 @@ function setupHistory() {
 // Side Zoom Wheel & Pan/Pinch Controller
 let zoomState = {
     scale: 1.0,
-    minScale: 1.0,
-    maxScale: 5.0,
+    minScale: 0.2, // Dezoom down to 20% for large desktop images!
+    maxScale: 5.0, // Zoom up to 500%
     panX: 0,
     panY: 0,
     isDragging: false,
@@ -1296,12 +1296,6 @@ function setupZoomWheel() {
     function applyZoom(newScale, updateWheelUI = true) {
         zoomState.scale = Math.min(Math.max(newScale, zoomState.minScale), zoomState.maxScale);
         
-        // Reset pan offset if scale goes back to 1.0
-        if (zoomState.scale === 1.0) {
-            zoomState.panX = 0;
-            zoomState.panY = 0;
-        }
-        
         mainCanvas.style.transform = `translate(${zoomState.panX}px, ${zoomState.panY}px) scale(${zoomState.scale})`;
         
         if (btnReset) {
@@ -1309,10 +1303,17 @@ function setupZoomWheel() {
         }
         
         if (updateWheelUI) {
-            // Map scale 1.0 -> 5.0 to track position 100% -> 0% (vertical slider)
+            // Map scale 0.2 -> 5.0 to track position 100% -> 0% (vertical slider)
             const pct = 1.0 - ((zoomState.scale - zoomState.minScale) / (zoomState.maxScale - zoomState.minScale));
             thumb.style.top = `${pct * 100}%`;
         }
+    }
+    
+    function resetZoomAndPan() {
+        zoomState.scale = 1.0;
+        zoomState.panX = 0;
+        zoomState.panY = 0;
+        applyZoom(1.0, true);
     }
     
     // Track dragging / clicking for Zoom Wheel
@@ -1349,22 +1350,23 @@ function setupZoomWheel() {
     track.addEventListener('pointerup', stopWheelDrag);
     track.addEventListener('pointercancel', stopWheelDrag);
     
-    if (btnIn) btnIn.addEventListener('click', () => applyZoom(zoomState.scale + 0.5));
-    if (btnOut) btnOut.addEventListener('click', () => applyZoom(zoomState.scale - 0.5));
-    if (btnReset) btnReset.addEventListener('click', () => applyZoom(1.0));
+    if (btnIn) btnIn.addEventListener('click', () => applyZoom(zoomState.scale + 0.4));
+    if (btnOut) btnOut.addEventListener('click', () => applyZoom(zoomState.scale - 0.4));
+    if (btnReset) btnReset.addEventListener('click', () => resetZoomAndPan());
     
-    // Pan image on Canvas when zoomed in
+    // 1. Universal Panning on Canvas (Click & Drag at any scale!)
+    mainCanvas.style.cursor = 'grab';
+    
     mainCanvas.addEventListener('pointerdown', (e) => {
-        if (zoomState.scale > 1.0) {
-            zoomState.isDragging = true;
-            zoomState.startX = e.clientX - zoomState.panX;
-            zoomState.startY = e.clientY - zoomState.panY;
-            mainCanvas.setPointerCapture(e.pointerId);
-        }
+        zoomState.isDragging = true;
+        zoomState.startX = e.clientX - zoomState.panX;
+        zoomState.startY = e.clientY - zoomState.panY;
+        mainCanvas.style.cursor = 'grabbing';
+        try { mainCanvas.setPointerCapture(e.pointerId); } catch(err) {}
     });
     
     mainCanvas.addEventListener('pointermove', (e) => {
-        if (zoomState.isDragging && zoomState.scale > 1.0) {
+        if (zoomState.isDragging) {
             zoomState.panX = e.clientX - zoomState.startX;
             zoomState.panY = e.clientY - zoomState.startY;
             applyZoom(zoomState.scale, false);
@@ -1374,16 +1376,23 @@ function setupZoomWheel() {
     const stopPan = (e) => {
         if (zoomState.isDragging) {
             zoomState.isDragging = false;
+            mainCanvas.style.cursor = 'grab';
             try { mainCanvas.releasePointerCapture(e.pointerId); } catch(err) {}
         }
     };
     mainCanvas.addEventListener('pointerup', stopPan);
     mainCanvas.addEventListener('pointercancel', stopPan);
     
+    // 2. Double Click / Double Tap on Canvas -> General Reset (Reset Zoom & Pan to 100%)
+    mainCanvas.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        resetZoomAndPan();
+    });
+    
     // Mouse wheel zoom over canvas
     mainCanvas.parentElement.addEventListener('wheel', (e) => {
         e.preventDefault();
-        const delta = e.deltaY < 0 ? 0.2 : -0.2;
+        const delta = e.deltaY < 0 ? 0.15 : -0.15;
         applyZoom(zoomState.scale + delta);
     }, { passive: false });
 }
