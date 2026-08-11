@@ -98,46 +98,57 @@ export class LocalLightEngine {
         }
 
         vec3 adjustLight(vec3 color) {
-            // Exposure
-            color *= pow(2.0, u_exposure * 3.0); 
+            // Exposure (tamed to +/- 1.5 EV for precise control)
+            color *= pow(2.0, u_exposure * 1.5); 
             
-            // Standard Linear Contrast
-            color = (color - 0.5) * (1.0 + u_contrast) + 0.5;
+            // Standard Linear Contrast (tamed multiplier)
+            color = (color - 0.5) * (1.0 + u_contrast * 0.45) + 0.5;
             color = clamp(color, 0.0, 1.0);
             
             // Cinematic Contrast (S-Curve)
             if (u_cinematic_contrast > 0.0) {
-                vec3 sCurve = color * color * (3.0 - 2.0 * color); // smoothstep formula
+                vec3 sCurve = color * color * (3.0 - 2.0 * color);
                 color = mix(color, sCurve, u_cinematic_contrast);
             } else if (u_cinematic_contrast < 0.0) {
-                // Inverse effect (flattening)
                 vec3 flatColor = (color - 0.5) * 0.5 + 0.5;
                 color = mix(color, flatColor, -u_cinematic_contrast);
             }
             
             float lum = getLuminance(color);
             float shadowMask = 1.0 - smoothstep(0.0, 0.5, lum);
-            float highlightMask = smoothstep(0.5, 1.0, lum);
+            float highlightMask = smoothstep(0.4, 0.95, lum);
             
-            // Boost shadows using a small offset so pure black can lift
-            color += (color + 0.05) * shadowMask * u_shadows;
-            color += color * highlightMask * u_highlights;
+            // Shadows
+            if (u_shadows > 0.0) {
+                color += (1.0 - color) * shadowMask * (u_shadows * 0.35);
+            } else {
+                color += color * shadowMask * (u_shadows * 0.4);
+            }
+            
+            // Highlights
+            if (u_highlights > 0.0) {
+                color += (1.0 - color) * highlightMask * (u_highlights * 0.35);
+            } else {
+                color += color * highlightMask * (u_highlights * 0.4);
+            }
             
             lum = getLuminance(clamp(color, 0.0, 1.0));
-            float blackMask = 1.0 - smoothstep(0.0, 0.25, lum);
-            float whiteMask = smoothstep(0.75, 1.0, lum);
+            float blackMask = 1.0 - smoothstep(0.0, 0.3, lum);
+            float whiteMask = smoothstep(0.7, 1.0, lum);
             
-            // Blacks (Lift/Crush)
+            // Blacks
             if (u_blacks > 0.0) {
-                // Lift blacks by adding a flat value
-                color += u_blacks * blackMask * 0.25;
+                color += (1.0 - color) * blackMask * (u_blacks * 0.2);
             } else {
-                // Crush blacks by multiplying
-                color += color * blackMask * (u_blacks * 2.0);
+                color += color * blackMask * (u_blacks * 0.4);
             }
             
             // Whites
-            color += color * whiteMask * (u_whites * 0.75);
+            if (u_whites > 0.0) {
+                color += (1.0 - color) * whiteMask * (u_whites * 0.35);
+            } else {
+                color += color * whiteMask * (u_whites * 0.35);
+            }
             
             // ASC CDL (Color Wheels)
             color = clamp(color * u_gain + u_lift, 0.0, 1.0);
@@ -150,7 +161,9 @@ export class LocalLightEngine {
         vec3 adjustColor(vec3 color) {
             vec3 hsv = rgb2hsv(color);
             float satMult = 1.0 + u_saturation;
-            float vibMult = 1.0 + (u_vibrance * (1.0 - hsv.y));
+            
+            // Boosted Vibrance: targets muted colors with higher power
+            float vibMult = 1.0 + (u_vibrance * 1.8 * pow(1.0 - hsv.y, 1.2));
             hsv.y = clamp(hsv.y * satMult * vibMult, 0.0, 1.0);
             
             // Cinematic Saturation (Perceptual roll-off curve)
@@ -166,8 +179,7 @@ export class LocalLightEngine {
                 }
             }
             
-            // HSL Color Shift per-channel (8 bands)
-            // Base hues in [0,1]: R=0, Or=0.0833, Ye=0.1667, Gr=0.3333, Cy=0.5, Bl=0.6667, Pu=0.75, Mg=0.8333
+            // HSL Color Shift per-channel (8 isolated bands)
             vec3 totalShift = vec3(0.0);
             float channelHues[8];
             channelHues[0] = 0.0;
@@ -183,8 +195,8 @@ export class LocalLightEngine {
                 float targetH = channelHues[i];
                 float dist = abs(hsv.x - targetH);
                 if (dist > 0.5) dist = 1.0 - dist;
-                // Cosine bell-curve across full 180° (0.5 hue dist) for maximum continuous softness
-                float weight = 0.5 + 0.5 * cos(dist * 6.2831853);
+                // Tight, separated band falloff (~28°) so adjacent colors don't bleed into each other
+                float weight = smoothstep(0.078, 0.0, dist);
                 totalShift += u_hsl_shifts[i] * weight;
             }
             

@@ -390,6 +390,40 @@ fileInputHome.addEventListener('change', (e) => {
     reader.readAsDataURL(file);
 });
 
+const lutBtns = document.querySelectorAll('.lut-btn');
+lutBtns.forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+        lutBtns.forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        const lutFile = e.target.dataset.lut;
+        if (!engine) return;
+        
+        if (lutFile === 'none') {
+            const intensitySlider = document.querySelector('[data-uniform="u_lut_intensity"]');
+            if (intensitySlider) {
+                intensitySlider.value = 0;
+                intensitySlider.dispatchEvent(new Event('input'));
+            }
+            return;
+        }
+        
+        try {
+            const res = await fetch(`./${lutFile}`);
+            const text = await res.text();
+            const lutData = parseCubeLUT(text);
+            engine.loadLUT(lutData);
+            
+            const intensitySlider = document.querySelector('[data-uniform="u_lut_intensity"]');
+            if (intensitySlider) {
+                intensitySlider.value = 100;
+                intensitySlider.dispatchEvent(new Event('input'));
+            }
+        } catch(err) {
+            console.error('Error loading default LUT:', err);
+        }
+    });
+});
+
 const lutInput = document.getElementById('lut-input');
 if (lutInput) {
     lutInput.addEventListener('change', (e) => {
@@ -401,6 +435,8 @@ if (lutInput) {
             try {
                 const lutData = parseCubeLUT(event.target.result);
                 engine.loadLUT(lutData);
+                
+                lutBtns.forEach(b => b.classList.remove('active'));
                 
                 // Update UI slider for intensity to 100% since it's turned on
                 const intensitySlider = document.querySelector('[data-uniform="u_lut_intensity"]');

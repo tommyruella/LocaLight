@@ -172,8 +172,14 @@
                     <button class="info-btn"><svg class="collapse-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
                 </div>
                 <div class="sliders-list">
-                    <label class="primary-btn" for="lut-input" style="justify-content: center; width: 100%;">
-                        Load .cube LUT
+                    <div class="lut-presets-row" style="display: flex; gap: 8px; justify-content: center;">
+                        <button class="sub-nav-btn active lut-btn" data-lut="none">None</button>
+                        <button class="sub-nav-btn lut-btn" data-lut="FUJI.cube">Fuji Film</button>
+                        <button class="sub-nav-btn lut-btn" data-lut="KODAK.cube">Kodak Film</button>
+                    </div>
+
+                    <label class="primary-btn" for="lut-input" style="justify-content: center; width: 100%; margin-top: 8px;">
+                        Custom .cube LUT
                     </label>
                     <input type="file" id="lut-input" accept=".cube" class="hidden-input">
                     
