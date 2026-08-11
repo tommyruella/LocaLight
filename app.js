@@ -342,11 +342,378 @@ function setupMenus() {
     });
 }
 
+// --- IndexedDB Project Manager ---
+const DB_NAME = 'LocalLightDB';
+const DB_VERSION = 1;
+let db = null;
+
+function initDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (e) => {
+            const database = e.target.result;
+            if (!database.objectStoreNames.contains('projects')) {
+                database.createObjectStore('projects', { keyPath: 'id' });
+            }
+        };
+        request.onsuccess = (e) => {
+            db = e.target.result;
+            setupActionSheet();
+            loadRecentProjectsUI();
+            resolve(db);
+        };
+        request.onerror = (e) => reject(e);
+    });
+}
+window.addEventListener('load', () => initDB());
+
+let selectedProjectForAction = null;
+
+function setupActionSheet() {
+    const overlay = document.getElementById('action-sheet-overlay');
+    const btnDuplicate = document.getElementById('btn-project-duplicate');
+    const btnDelete = document.getElementById('btn-project-delete');
+    const btnCancel = document.getElementById('btn-project-cancel');
+    
+    const closeSheet = () => {
+        if (overlay) overlay.classList.remove('active');
+        selectedProjectForAction = null;
+    };
+    
+    if (btnCancel) btnCancel.addEventListener('click', closeSheet);
+    if (overlay) {
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closeSheet();
+        });
+    }
+    
+    if (btnDuplicate) {
+        btnDuplicate.addEventListener('click', () => {
+            if (selectedProjectForAction) {
+                duplicateProject(selectedProjectForAction);
+                closeSheet();
+            }
+        });
+    }
+    
+    if (btnDelete) {
+        btnDelete.addEventListener('click', () => {
+            if (selectedProjectForAction) {
+                deleteProject(selectedProjectForAction.id);
+                closeSheet();
+            }
+        });
+    }
+    const btnClearStorage = document.getElementById('btn-clear-storage');
+    if (btnClearStorage) {
+        btnClearStorage.addEventListener('click', async () => {
+            if (!confirm('Are you sure you want to completely wipe all stored project photos, presets, and cache?')) {
+                return;
+            }
+            try {
+                if (db) {
+                    db.close();
+                    db = null;
+                }
+                await new Promise((resolve) => {
+                    const req = indexedDB.deleteDatabase('LocalLightDB');
+                    req.onsuccess = () => resolve();
+                    req.onerror = () => resolve();
+                    req.onblocked = () => resolve();
+                });
+                if ('caches' in window) {
+                    const cacheNames = await caches.keys();
+                    await Promise.all(cacheNames.map(name => caches.delete(name)));
+                }
+                localStorage.clear();
+                sessionStorage.clear();
+                await initDB();
+                loadRecentProjectsUI();
+            } catch (err) {
+                console.error('Error performing full storage clear:', err);
+            }
+        });
+    }
+}
+
+function openActionSheet(proj) {
+    selectedProjectForAction = proj;
+    const overlay = document.getElementById('action-sheet-overlay');
+    const titleSpan = document.getElementById('action-sheet-title');
+    if (titleSpan) titleSpan.textContent = proj.name || 'Project Options';
+    if (overlay) overlay.classList.add('active');
+    if (navigator.vibrate) navigator.vibrate(40);
+}
+
+function duplicateProject(proj) {
+    if (!db) return;
+    const newId = proj.id + '_copy_' + Date.now();
+    const duplicatedRecord = {
+        ...JSON.parse(JSON.stringify(proj)),
+        id: newId,
+        name: proj.name ? (proj.name.replace(/\.[^/.]+$/, '') + ' Copy.jpg') : 'Copy.jpg',
+        updatedAt: Date.now()
+    };
+    
+    const tx = db.transaction('projects', 'readwrite');
+    const store = tx.objectStore('projects');
+    store.put(duplicatedRecord);
+    tx.oncomplete = () => loadRecentProjectsUI();
+}
+
+function deleteProject(id) {
+    if (!db) return;
+    const tx = db.transaction('projects', 'readwrite');
+    const store = tx.objectStore('projects');
+    store.delete(id);
+    tx.oncomplete = () => loadRecentProjectsUI();
+}
+
+function generateThumbnail(img, maxSize = 480) {
+    const canvasThumb = document.createElement('canvas');
+    let w = img.width;
+    let h = img.height;
+    if (w > h) {
+        if (w > maxSize) {
+            h = Math.round((h * maxSize) / w);
+            w = maxSize;
+        }
+    } else {
+        if (h > maxSize) {
+            w = Math.round((w * maxSize) / h);
+            h = maxSize;
+        }
+    }
+    canvasThumb.width = Math.max(1, w);
+    canvasThumb.height = Math.max(1, h);
+    const ctx = canvasThumb.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    return canvasThumb.toDataURL('image/jpeg', 0.8);
+}
+
+function updateStorageStatsUI() {
+    if (!db) return;
+    const tx = db.transaction('projects', 'readonly');
+    const store = tx.objectStore('projects');
+    const request = store.getAll();
+    
+    request.onsuccess = async () => {
+        const projects = request.result || [];
+        let totalBytes = 0;
+        
+        projects.forEach(proj => {
+            if (proj.originalBlob && proj.originalBlob.size) {
+                totalBytes += proj.originalBlob.size;
+            }
+            if (proj.thumbnail) {
+                totalBytes += proj.thumbnail.length;
+            }
+        });
+        
+        const mb = (totalBytes / (1024 * 1024)).toFixed(1);
+        const storageText = document.getElementById('storage-text');
+        
+        if (navigator.storage && navigator.storage.estimate) {
+            try {
+                const estimate = await navigator.storage.estimate();
+                const totalUsedMB = (estimate.usage / (1024 * 1024)).toFixed(1);
+                if (storageText) {
+                    storageText.textContent = `Storage: ${mb} MB (${projects.length} project${projects.length === 1 ? '' : 's'}) • Cache: ${totalUsedMB} MB`;
+                }
+            } catch (e) {
+                if (storageText) storageText.textContent = `Storage: ${mb} MB (${projects.length} project${projects.length === 1 ? '' : 's'})`;
+            }
+        } else {
+            if (storageText) storageText.textContent = `Storage: ${mb} MB (${projects.length} project${projects.length === 1 ? '' : 's'})`;
+        }
+    };
+}
+
+function saveCurrentProject() {
+    if (!db || !currentImage) return;
+    
+    try {
+        const fileMeta = currentImage._fileMeta || {
+            name: 'Untitled.jpg',
+            size: 0,
+            lastModified: Date.now()
+        };
+        
+        const projectId = `${fileMeta.name}_${fileMeta.size}_${fileMeta.lastModified}`;
+        const thumbUrl = generateThumbnail(currentImage, 480);
+        const stateSnapshot = captureCurrentState();
+        const ar = (currentImage.height && currentImage.width) ? (currentImage.height / currentImage.width) : 1.2;
+        
+        const projectRecord = {
+            id: projectId,
+            name: fileMeta.name,
+            size: fileMeta.size,
+            lastModified: fileMeta.lastModified,
+            updatedAt: Date.now(),
+            thumbnail: thumbUrl,
+            aspectRatio: ar,
+            originalBlob: currentImage._originalBlob || null,
+            state: stateSnapshot
+        };
+        
+        const tx = db.transaction('projects', 'readwrite');
+        const store = tx.objectStore('projects');
+        store.put(projectRecord);
+        tx.oncomplete = () => loadRecentProjectsUI();
+    } catch (err) {
+        console.error('Error saving project to IndexedDB:', err);
+    }
+}
+
+function loadRecentProjectsUI() {
+    if (!db) return;
+    const tx = db.transaction('projects', 'readonly');
+    const store = tx.objectStore('projects');
+    const request = store.getAll();
+    
+    request.onsuccess = () => {
+        const projects = request.result || [];
+        projects.sort((a, b) => b.updatedAt - a.updatedAt);
+        
+        const container = document.getElementById('recent-projects-list');
+        if (!container) return;
+        
+        updateStorageStatsUI();
+        
+        if (projects.length === 0) {
+            container.innerHTML = '<div class="empty-state">No recent projects</div>';
+            return;
+        }
+        
+        container.innerHTML = `
+            <div class="masonry-col" id="masonry-col-1"></div>
+            <div class="masonry-col" id="masonry-col-2"></div>
+        `;
+        
+        const col1 = document.getElementById('masonry-col-1');
+        const col2 = document.getElementById('masonry-col-2');
+        
+        // Pinterest Shortest-Column Dynamic Algorithm
+        let colHeights = [0, 0];
+        
+        projects.forEach((proj) => {
+            let ext = 'JPEG';
+            if (proj.name) {
+                const match = proj.name.match(/\.([a-zA-Z0-9]+)$/);
+                if (match) ext = match[1].toUpperCase();
+            }
+            
+            const ar = proj.aspectRatio || 1.2;
+            const targetColIndex = (colHeights[0] <= colHeights[1]) ? 0 : 1;
+            const targetCol = (targetColIndex === 0) ? col1 : col2;
+            
+            const cardHtml = `
+                <div class="project-card" data-project-id="${proj.id}">
+                    <img src="${proj.thumbnail}" class="project-thumb" alt="${proj.name}">
+                    <span class="project-badge">${ext}</span>
+                    <button class="project-options-btn" data-project-id="${proj.id}" title="Options">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="12" cy="19" r="2.2"/></svg>
+                    </button>
+                </div>
+            `;
+            
+            targetCol.insertAdjacentHTML('beforeend', cardHtml);
+            colHeights[targetColIndex] += ar;
+        });
+        
+        container.querySelectorAll('.project-card').forEach(card => {
+            const id = card.dataset.projectId;
+            const proj = projects.find(p => p.id === id);
+            if (!proj) return;
+            
+            let pressTimer = null;
+            let isLongPress = false;
+            
+            const startPress = () => {
+                isLongPress = false;
+                pressTimer = setTimeout(() => {
+                    isLongPress = true;
+                    openActionSheet(proj);
+                }, 500);
+            };
+            
+            const cancelPress = () => {
+                if (pressTimer) clearTimeout(pressTimer);
+            };
+            
+            card.addEventListener('touchstart', startPress, { passive: true });
+            card.addEventListener('touchend', (e) => {
+                cancelPress();
+            });
+            card.addEventListener('touchmove', cancelPress, { passive: true });
+            card.addEventListener('mousedown', startPress);
+            card.addEventListener('mouseup', cancelPress);
+            card.addEventListener('mouseleave', cancelPress);
+            
+            card.addEventListener('click', (e) => {
+                if (isLongPress) return;
+                if (e.target.closest('.project-options-btn')) {
+                    e.stopPropagation();
+                    openActionSheet(proj);
+                    return;
+                }
+                openProject(proj);
+            });
+        });
+    };
+}
+
+function openProject(projectRecord) {
+    if (projectRecord.originalBlob) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const fullImg = new Image();
+            fullImg.onload = () => {
+                fullImg._fileMeta = {
+                    name: projectRecord.name,
+                    size: projectRecord.size,
+                    lastModified: projectRecord.lastModified
+                };
+                fullImg._originalBlob = projectRecord.originalBlob;
+                currentImage = fullImg;
+                initEngine();
+                engine.loadImage(fullImg);
+                applyHistoryState(projectRecord.state);
+                historyStack = [projectRecord.state];
+                historyIndex = 0;
+                updateHistoryButtonsState();
+                showScreen(editorWorkspace);
+            };
+            fullImg.src = event.target.result;
+        };
+        reader.readAsDataURL(projectRecord.originalBlob);
+    } else {
+        const img = new Image();
+        img.onload = () => {
+            img._fileMeta = {
+                name: projectRecord.name,
+                size: projectRecord.size,
+                lastModified: projectRecord.lastModified
+            };
+            currentImage = img;
+            initEngine();
+            engine.loadImage(img);
+            applyHistoryState(projectRecord.state);
+            historyStack = [projectRecord.state];
+            historyIndex = 0;
+            updateHistoryButtonsState();
+            showScreen(editorWorkspace);
+        };
+        img.src = projectRecord.thumbnail;
+    }
+}
+
 // Event Listeners
 btnBack.addEventListener('click', () => {
+    saveCurrentProject();
     showScreen(homeScreen);
     currentImage = null;
-    fileInputHome.value = ''; // Reset input
+    fileInputHome.value = '';
 });
 
 // Compare functionality (Hold to view original)
@@ -377,15 +744,55 @@ fileInputHome.addEventListener('change', (e) => {
         const img = new Image();
         img.onload = () => {
             try {
+                img._fileMeta = {
+                    name: file.name,
+                    size: file.size,
+                    lastModified: file.lastModified
+                };
+                img._originalBlob = file;
                 currentImage = img;
                 initEngine();
                 engine.loadImage(img);
-                engine.resetState();
-                resetSliders();
-                historyStack = [];
-                historyIndex = -1;
-                pushHistoryState();
-                showScreen(editorWorkspace);
+                
+                const projectId = `${file.name}_${file.size}_${file.lastModified}`;
+                
+                // Check if existing project exists in IndexedDB
+                if (db) {
+                    const tx = db.transaction('projects', 'readonly');
+                    const store = tx.objectStore('projects');
+                    const request = store.get(projectId);
+                    request.onsuccess = () => {
+                        const existingProject = request.result;
+                        if (existingProject && confirm(`Found previous saved edits for "${file.name}".\n\nWould you like to restore your previous project edits?`)) {
+                            applyHistoryState(existingProject.state);
+                            historyStack = [existingProject.state];
+                            historyIndex = 0;
+                            updateHistoryButtonsState();
+                        } else {
+                            engine.resetState();
+                            resetSliders();
+                            historyStack = [];
+                            historyIndex = -1;
+                            pushHistoryState();
+                        }
+                        showScreen(editorWorkspace);
+                    };
+                    request.onerror = () => {
+                        engine.resetState();
+                        resetSliders();
+                        historyStack = [];
+                        historyIndex = -1;
+                        pushHistoryState();
+                        showScreen(editorWorkspace);
+                    };
+                } else {
+                    engine.resetState();
+                    resetSliders();
+                    historyStack = [];
+                    historyIndex = -1;
+                    pushHistoryState();
+                    showScreen(editorWorkspace);
+                }
             } catch (err) {
                 alert("Error loading image: " + err.message + "\n\nStack: " + err.stack);
             }
@@ -457,22 +864,167 @@ if (lutInput) {
     });
 }
 
-btnExport.addEventListener('click', () => {
+// Export Settings Modal Manager
+let exportSettings = {
+    format: 'image/jpeg',
+    quality: 0.95,
+    scale: 1.0
+};
+
+function setupExportModal() {
+    const modal = document.getElementById('export-modal');
+    const btnClose = document.getElementById('btn-close-export');
+    const formatControl = document.getElementById('export-format-control');
+    const resControl = document.getElementById('export-res-control');
+    const qualitySlider = document.getElementById('export-quality-slider');
+    const qualityVal = document.getElementById('export-quality-val');
+    const btnDoExport = document.getElementById('btn-do-export');
+    const btnShareExport = document.getElementById('btn-share-export');
+    const groupQuality = document.getElementById('group-export-quality');
+    
+    const closeModal = () => {
+        if (modal) modal.classList.remove('active');
+    };
+    
+    if (btnClose) btnClose.addEventListener('click', closeModal);
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeModal();
+        });
+    }
+    
+    if (formatControl) {
+        formatControl.querySelectorAll('.segment-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                formatControl.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                exportSettings.format = btn.dataset.format;
+                if (groupQuality) {
+                    groupQuality.style.display = (exportSettings.format === 'image/png') ? 'none' : 'flex';
+                }
+                updateExportSizeEstimate();
+            });
+        });
+    }
+    
+    if (qualitySlider) {
+        qualitySlider.addEventListener('input', (e) => {
+            const val = parseInt(e.target.value);
+            exportSettings.quality = val / 100;
+            if (qualityVal) qualityVal.textContent = `${val}%`;
+            updateExportSizeEstimate();
+        });
+    }
+    
+    if (resControl) {
+        resControl.querySelectorAll('.segment-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                resControl.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                exportSettings.scale = parseFloat(btn.dataset.scale);
+                updateExportSizeEstimate();
+            });
+        });
+    }
+    
+    if (btnDoExport) {
+        btnDoExport.addEventListener('click', () => executeExport(false));
+    }
+    
+    if (btnShareExport) {
+        btnShareExport.addEventListener('click', () => executeExport(true));
+    }
+}
+window.addEventListener('load', () => setupExportModal());
+
+function openExportModal() {
     if (!currentImage || !engine) return;
-    
-    // Request a render immediately before export just in case
     engine.render();
+    const modal = document.getElementById('export-modal');
+    if (modal) modal.classList.add('active');
+    updateExportSizeEstimate();
+}
+
+async function getExportBlob() {
+    if (!canvas) return null;
     
-    // Export high-res image from WebGL canvas
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+    let targetWidth = canvas.width * exportSettings.scale;
+    let targetHeight = canvas.height * exportSettings.scale;
     
-    // Create temporary link to download
+    let exportCanvas = canvas;
+    if (exportSettings.scale < 1.0) {
+        exportCanvas = document.createElement('canvas');
+        exportCanvas.width = targetWidth;
+        exportCanvas.height = targetHeight;
+        const ctx = exportCanvas.getContext('2d');
+        ctx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
+    }
+    
+    return new Promise((resolve) => {
+        exportCanvas.toBlob((blob) => {
+            resolve(blob);
+        }, exportSettings.format, exportSettings.quality);
+    });
+}
+
+async function updateExportSizeEstimate() {
+    const sizeText = document.getElementById('export-size-text');
+    const previewImg = document.getElementById('export-preview-img');
+    if (!sizeText) return;
+    sizeText.textContent = 'Calculating...';
+    
+    const blob = await getExportBlob();
+    if (blob) {
+        const mb = (blob.size / (1024 * 1024)).toFixed(2);
+        sizeText.textContent = `~ ${mb} MB`;
+        
+        if (previewImg) {
+            previewImg.src = URL.createObjectURL(blob);
+        }
+    }
+}
+
+async function executeExport() {
+    const blob = await getExportBlob();
+    if (!blob) return;
+    
+    let ext = 'jpg';
+    if (exportSettings.format === 'image/png') ext = 'png';
+    if (exportSettings.format === 'image/webp') ext = 'webp';
+    
+    const filename = `LocalLight_${Date.now()}.${ext}`;
+    const file = new File([blob], filename, { type: exportSettings.format });
+    
+    const modal = document.getElementById('export-modal');
+    if (modal) modal.classList.remove('active');
+    
+    // Native Web Share API (iOS Safari / Mobile System Share Sheet)
+    if (navigator.share) {
+        try {
+            await navigator.share({
+                files: [file],
+                title: filename
+            });
+            return;
+        } catch (err) {
+            // User closed share sheet
+            if (err.name === 'AbortError') return;
+        }
+    }
+    
+    // Desktop Fallback (Blob URL download without data: tab)
+    const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.download = `LocalLight_${Date.now()}.jpg`;
-    link.href = dataUrl;
+    link.download = filename;
+    link.href = blobUrl;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+}
+
+btnExport.addEventListener('click', () => {
+    openExportModal();
 });
 
 function updateMixUniforms() {
@@ -572,6 +1124,7 @@ function pushHistoryState() {
     if (historyStack.length > 50) historyStack.shift();
     historyIndex = historyStack.length - 1;
     updateHistoryButtonsState();
+    saveCurrentProject();
 }
 
 function applyHistoryState(state) {

@@ -18,6 +18,7 @@ export class LocalLightEngine {
 
         this.state = {
             u_exposure: 0.0,
+            u_brightness: 0.0,
             u_contrast: 0.0,
             u_cinematic_contrast: 0.0,
             u_highlights: 0.0,
@@ -35,6 +36,8 @@ export class LocalLightEngine {
             u_gain: [1.0, 1.0, 1.0],
             u_temperature: 0.0,
             u_tint: 0.0,
+            u_shadow_toe: 0.0,
+            u_highlight_shoulder: 0.0,
             u_hsl_shifts: new Float32Array(24)
         };
 
@@ -60,6 +63,7 @@ export class LocalLightEngine {
         uniform sampler2D u_image;
         
         uniform float u_exposure;
+        uniform float u_brightness;
         uniform float u_contrast;
         uniform float u_cinematic_contrast;
         uniform float u_highlights;
@@ -74,6 +78,8 @@ export class LocalLightEngine {
         uniform vec3 u_gain;
         uniform float u_temperature;
         uniform float u_tint;
+        uniform float u_shadow_toe;
+        uniform float u_highlight_shoulder;
         uniform vec3 u_hsl_shifts[8];
         
         out vec4 outColor;
@@ -97,21 +103,94 @@ export class LocalLightEngine {
             return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
         }
 
+        // DaVinci Intermediate Color Science (Blackmagic Design DWG/DI)
+        const float DI_A = 0.0075;
+        const float DI_B = 7.0;
+        const float DI_C = 0.07329248;
+        const float DI_M = 10.44426855;
+        const float DI_LIN_CUT = 0.00262409;
+        const float DI_LOG_CUT = 0.02740668;
+        const float DV_MID_GRAY = 0.336043; // Exact 18% Mid-Gray in DaVinci Intermediate
+
+        float linearToDI(float x) {
+            if (x <= DI_LIN_CUT) return x * DI_M;
+            return (log2(x + DI_A) + DI_B) * DI_C;
+        }
+
+        vec3 linearToDI(vec3 c) {
+            return vec3(linearToDI(c.r), linearToDI(c.g), linearToDI(c.b));
+        }
+
+        float DIToLinear(float v) {
+            if (v <= DI_LOG_CUT) return v / DI_M;
+            return pow(2.0, (v / DI_C) - DI_B) - DI_A;
+        }
+
+        vec3 DIToLinear(vec3 v) {
+            return vec3(DIToLinear(v.r), DIToLinear(v.g), DIToLinear(v.b));
+        }
+
         vec3 adjustLight(vec3 color) {
-            // Exposure (tamed to +/- 1.5 EV for precise control)
+            // 1. Exposure (tamed to +/- 1.5 EV for precise control)
             color *= pow(2.0, u_exposure * 1.5); 
             
-            // Standard Linear Contrast (tamed multiplier)
+            // 2. Brightness (Photographic midtone lift, preserving 0.0 black & 1.0 white bounds)
+            if (u_brightness != 0.0) {
+                if (u_brightness > 0.0) {
+                    color += (1.0 - color) * color * (u_brightness * 0.7);
+                } else {
+                    color += color * (u_brightness * 0.45);
+                }
+            }
+            
+            // 3. Standard Linear Contrast (tamed multiplier)
             color = (color - 0.5) * (1.0 + u_contrast * 0.45) + 0.5;
             color = clamp(color, 0.0, 1.0);
             
-            // Cinematic Contrast (S-Curve)
-            if (u_cinematic_contrast > 0.0) {
-                vec3 sCurve = color * color * (3.0 - 2.0 * color);
-                color = mix(color, sCurve, u_cinematic_contrast);
-            } else if (u_cinematic_contrast < 0.0) {
-                vec3 flatColor = (color - 0.5) * 0.5 + 0.5;
-                color = mix(color, flatColor, -u_cinematic_contrast);
+            // Store luminance before Film Curve to lock overall image brightness 100%
+            float preLum = getLuminance(color);
+            
+            // --- DaVinci Intermediate Film Curve (DWG/DI Log S-Curve) ---
+            vec3 diColor = linearToDI(color);
+            
+            // 1. Film Contrast (S-Curve centered at 0.5 log space for symmetric balance)
+            if (u_cinematic_contrast != 0.0) {
+                float factor = 1.0 + u_cinematic_contrast * 0.76;
+                diColor = (diColor - 0.5) * factor + 0.5;
+            }
+            
+            // 2. Shadow Toe (Shapes shadow toe: lift to fade blacks, lower to crush)
+            if (u_shadow_toe != 0.0) {
+                vec3 toeWeight = clamp((vec3(DV_MID_GRAY) - diColor) / vec3(DV_MID_GRAY), 0.0, 1.0);
+                toeWeight = toeWeight * toeWeight;
+                if (u_shadow_toe > 0.0) {
+                    diColor += toeWeight * (u_shadow_toe * 0.08);
+                } else {
+                    diColor += diColor * toeWeight * (u_shadow_toe * 0.25);
+                }
+            }
+            
+            // 3. Highlight Shoulder (Shapes highlight shoulder: raise for soft filmic roll-off, lower to harden)
+            if (u_highlight_shoulder != 0.0) {
+                vec3 shoulderWeight = clamp((diColor - vec3(DV_MID_GRAY)) / (vec3(1.0) - vec3(DV_MID_GRAY)), 0.0, 1.0);
+                shoulderWeight = shoulderWeight * shoulderWeight;
+                if (u_highlight_shoulder > 0.0) {
+                    vec3 rollOff = vec3(DV_MID_GRAY) + (diColor - vec3(DV_MID_GRAY)) * (1.0 / (1.0 + (diColor - vec3(DV_MID_GRAY)) * u_highlight_shoulder * 1.2));
+                    diColor = mix(diColor, rollOff, shoulderWeight);
+                } else {
+                    diColor += diColor * shoulderWeight * (u_highlight_shoulder * 0.2);
+                }
+            }
+            
+            color = clamp(DIToLinear(diColor), 0.0, 1.0);
+            
+            // LUMINANCE LOCK: Force total average image brightness to remain 100% constant
+            if (u_cinematic_contrast != 0.0) {
+                float postLum = getLuminance(color);
+                if (postLum > 0.001 && preLum > 0.001) {
+                    float lumRatio = preLum / postLum;
+                    color = clamp(color * mix(1.0, lumRatio, 0.75), 0.0, 1.0);
+                }
             }
             
             float lum = getLuminance(color);
@@ -323,7 +402,7 @@ export class LocalLightEngine {
         this.baseLocs = {};
         gl.useProgram(this.baseProgram);
         this.baseLocs['u_image'] = gl.getUniformLocation(this.baseProgram, 'u_image');
-        ['u_exposure', 'u_contrast', 'u_cinematic_contrast', 'u_highlights', 'u_shadows', 'u_whites', 'u_blacks', 'u_saturation', 'u_cinematic_saturation', 'u_vibrance', 'u_temperature', 'u_tint'].forEach(name => {
+        ['u_exposure', 'u_brightness', 'u_contrast', 'u_cinematic_contrast', 'u_highlights', 'u_shadows', 'u_whites', 'u_blacks', 'u_saturation', 'u_cinematic_saturation', 'u_vibrance', 'u_temperature', 'u_tint', 'u_shadow_toe', 'u_highlight_shoulder'].forEach(name => {
             this.baseLocs[name] = gl.getUniformLocation(this.baseProgram, name);
         });
         this.baseLocs['u_lift'] = gl.getUniformLocation(this.baseProgram, 'u_lift');
@@ -545,7 +624,7 @@ export class LocalLightEngine {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.originalTexture);
         gl.uniform1i(this.baseLocs['u_image'], 0);
-        ['u_exposure', 'u_contrast', 'u_cinematic_contrast', 'u_highlights', 'u_shadows', 'u_whites', 'u_blacks', 'u_saturation', 'u_cinematic_saturation', 'u_vibrance', 'u_temperature', 'u_tint'].forEach(name => {
+        ['u_exposure', 'u_brightness', 'u_contrast', 'u_cinematic_contrast', 'u_highlights', 'u_shadows', 'u_whites', 'u_blacks', 'u_saturation', 'u_cinematic_saturation', 'u_vibrance', 'u_temperature', 'u_tint', 'u_shadow_toe', 'u_highlight_shoulder'].forEach(name => {
             const val = this.bypassed ? 0.0 : this.state[name];
             gl.uniform1f(this.baseLocs[name], val);
         });
