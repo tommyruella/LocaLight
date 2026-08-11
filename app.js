@@ -1270,3 +1270,124 @@ function setupHistory() {
         });
     }
 }
+
+// Side Zoom Wheel & Pan/Pinch Controller
+let zoomState = {
+    scale: 1.0,
+    minScale: 1.0,
+    maxScale: 5.0,
+    panX: 0,
+    panY: 0,
+    isDragging: false,
+    startX: 0,
+    startY: 0
+};
+
+function setupZoomWheel() {
+    const mainCanvas = document.getElementById('main-canvas');
+    const track = document.getElementById('zoom-wheel-track');
+    const thumb = document.getElementById('zoom-wheel-thumb');
+    const btnIn = document.getElementById('btn-zoom-in');
+    const btnOut = document.getElementById('btn-zoom-out');
+    const btnReset = document.getElementById('btn-zoom-reset');
+    
+    if (!mainCanvas || !track || !thumb) return;
+    
+    function applyZoom(newScale, updateWheelUI = true) {
+        zoomState.scale = Math.min(Math.max(newScale, zoomState.minScale), zoomState.maxScale);
+        
+        // Reset pan offset if scale goes back to 1.0
+        if (zoomState.scale === 1.0) {
+            zoomState.panX = 0;
+            zoomState.panY = 0;
+        }
+        
+        mainCanvas.style.transform = `translate(${zoomState.panX}px, ${zoomState.panY}px) scale(${zoomState.scale})`;
+        
+        if (btnReset) {
+            btnReset.textContent = `${Math.round(zoomState.scale * 100)}%`;
+        }
+        
+        if (updateWheelUI) {
+            // Map scale 1.0 -> 5.0 to track position 100% -> 0% (vertical slider)
+            const pct = 1.0 - ((zoomState.scale - zoomState.minScale) / (zoomState.maxScale - zoomState.minScale));
+            thumb.style.top = `${pct * 100}%`;
+        }
+    }
+    
+    // Track dragging / clicking for Zoom Wheel
+    let isWheelDragging = false;
+    
+    function handleWheelMove(e) {
+        const rect = track.getBoundingClientRect();
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        let offsetY = clientY - rect.top;
+        offsetY = Math.min(Math.max(offsetY, 0), rect.height);
+        
+        const pct = 1.0 - (offsetY / rect.height);
+        const targetScale = zoomState.minScale + pct * (zoomState.maxScale - zoomState.minScale);
+        applyZoom(targetScale, false);
+        thumb.style.top = `${(1.0 - pct) * 100}%`;
+    }
+    
+    track.addEventListener('pointerdown', (e) => {
+        isWheelDragging = true;
+        track.setPointerCapture(e.pointerId);
+        handleWheelMove(e);
+    });
+    
+    track.addEventListener('pointermove', (e) => {
+        if (isWheelDragging) handleWheelMove(e);
+    });
+    
+    const stopWheelDrag = (e) => {
+        if (isWheelDragging) {
+            isWheelDragging = false;
+            try { track.releasePointerCapture(e.pointerId); } catch(err) {}
+        }
+    };
+    track.addEventListener('pointerup', stopWheelDrag);
+    track.addEventListener('pointercancel', stopWheelDrag);
+    
+    if (btnIn) btnIn.addEventListener('click', () => applyZoom(zoomState.scale + 0.5));
+    if (btnOut) btnOut.addEventListener('click', () => applyZoom(zoomState.scale - 0.5));
+    if (btnReset) btnReset.addEventListener('click', () => applyZoom(1.0));
+    
+    // Pan image on Canvas when zoomed in
+    mainCanvas.addEventListener('pointerdown', (e) => {
+        if (zoomState.scale > 1.0) {
+            zoomState.isDragging = true;
+            zoomState.startX = e.clientX - zoomState.panX;
+            zoomState.startY = e.clientY - zoomState.panY;
+            mainCanvas.setPointerCapture(e.pointerId);
+        }
+    });
+    
+    mainCanvas.addEventListener('pointermove', (e) => {
+        if (zoomState.isDragging && zoomState.scale > 1.0) {
+            zoomState.panX = e.clientX - zoomState.startX;
+            zoomState.panY = e.clientY - zoomState.startY;
+            applyZoom(zoomState.scale, false);
+        }
+    });
+    
+    const stopPan = (e) => {
+        if (zoomState.isDragging) {
+            zoomState.isDragging = false;
+            try { mainCanvas.releasePointerCapture(e.pointerId); } catch(err) {}
+        }
+    };
+    mainCanvas.addEventListener('pointerup', stopPan);
+    mainCanvas.addEventListener('pointercancel', stopPan);
+    
+    // Mouse wheel zoom over canvas
+    mainCanvas.parentElement.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.2 : -0.2;
+        applyZoom(zoomState.scale + delta);
+    }, { passive: false });
+}
+
+window.addEventListener('load', () => {
+    setupZoomWheel();
+});

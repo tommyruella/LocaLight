@@ -646,6 +646,115 @@ body {
     width: 100%;
     height: auto;
     object-fit: cover;
+    transition: transform 0.1s cubic-bezier(0.1, 0.9, 0.2, 1);
+    transform-origin: center center;
+}
+
+/* Side Zoom Control Wheel */
+.zoom-wheel-container {
+    position: absolute;
+    right: 16px;
+    top: 35%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    z-index: 150;
+    background: rgba(18, 18, 20, 0.75);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 8px 6px;
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    touch-action: none;
+}
+
+.zoom-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+}
+
+.zoom-btn:active {
+    background: var(--accent);
+    transform: scale(0.9);
+}
+
+.zoom-wheel-track {
+    width: 6px;
+    height: 110px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 3px;
+    position: relative;
+    cursor: pointer;
+    touch-action: none;
+}
+
+.zoom-wheel-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 10px rgba(255, 255, 255, 0.5);
+    position: absolute;
+    left: 50%;
+    top: 100%; /* Default 1x at bottom */
+    transform: translate(-50%, -50%);
+    transition: background 0.15s;
+    touch-action: none;
+}
+
+.zoom-wheel-container:active .zoom-wheel-thumb {
+    background: var(--accent);
+}
+
+.zoom-wheel-ticks {
+    position: absolute;
+    left: -8px;
+    top: 0;
+    width: 22px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    pointer-events: none;
+    opacity: 0.3;
+}
+
+.zoom-wheel-ticks span {
+    width: 4px;
+    height: 1px;
+    background: #fff;
+}
+
+.zoom-reset-badge {
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 9px;
+    font-weight: 700;
+    padding: 3px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    letter-spacing: 0.3px;
+    transition: all 0.15s;
+}
+
+.zoom-reset-badge:active {
+    background: var(--accent);
+    color: #fff;
 }
 
 /* Bottom UI System */
