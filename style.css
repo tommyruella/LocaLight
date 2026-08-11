@@ -340,10 +340,24 @@ body {
     transform: scale(0.95);
 }
 
-/* Export Settings Modal & Segmented Controls */
+/* Export Settings Modal (Centered on Screen) */
+#export-modal {
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 20px;
+}
+
 .export-sheet-content {
-    max-width: 440px;
+    max-width: 420px;
+    width: 100%;
     gap: 16px;
+    border-radius: 28px !important;
+    transform: scale(0.92);
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+#export-modal.active .export-sheet-content {
+    transform: scale(1);
 }
 
 .export-preview-box {
