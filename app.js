@@ -38,6 +38,7 @@ function initEngine() {
         setupMenus();
         setupWheels();
         setupMixPanel();
+        setupHistory();
     }
 }
 
@@ -160,8 +161,8 @@ function setupWheels() {
         wheel.addEventListener('touchstart', handleDown, {passive: true});
         window.addEventListener('mousemove', (e) => { if (isDragging) updateThumb(e); });
         window.addEventListener('touchmove', (e) => { if (isDragging) updateThumb(e); }, {passive: true});
-        window.addEventListener('mouseup', () => isDragging = false);
-        window.addEventListener('touchend', () => isDragging = false);
+        window.addEventListener('mouseup', () => { if (isDragging) { isDragging = false; pushHistoryState(); } });
+        window.addEventListener('touchend', () => { if (isDragging) { isDragging = false; pushHistoryState(); } });
     });
 
     // Wheels Carousel Logic
@@ -215,6 +216,7 @@ function setupSliders() {
                     engine.setUniform(uniformName, val);
                 }
             });
+            input.addEventListener('change', () => pushHistoryState());
         }
     });
 
@@ -380,6 +382,9 @@ fileInputHome.addEventListener('change', (e) => {
                 engine.loadImage(img);
                 engine.resetState();
                 resetSliders();
+                historyStack = [];
+                historyIndex = -1;
+                pushHistoryState();
                 showScreen(editorWorkspace);
             } catch (err) {
                 alert("Error loading image: " + err.message + "\n\nStack: " + err.stack);
@@ -525,7 +530,188 @@ function setupMixPanel() {
             e.target.previousElementSibling.querySelector('.val-display').textContent = e.target.value + '%';
             updateMixUniforms();
         });
+        slider.addEventListener('change', () => pushHistoryState());
     });
     
     updateMixSlidersUI();
+}
+
+// History System (Undo, Redo, Global Reset)
+let historyStack = [];
+let historyIndex = -1;
+let isRestoringHistory = false;
+
+function captureCurrentState() {
+    const slidersData = {};
+    document.querySelectorAll('.custom-slider').forEach(slider => {
+        const uniform = slider.getAttribute('data-uniform');
+        if (uniform) {
+            slidersData[uniform] = parseFloat(slider.value);
+        }
+    });
+    
+    return {
+        sliders: slidersData,
+        wheelState: JSON.parse(JSON.stringify(wheelState)),
+        mixState: JSON.parse(JSON.stringify(mixState)),
+        activeLut: document.querySelector('.lut-btn.active')?.dataset.lut || 'none'
+    };
+}
+
+function pushHistoryState() {
+    if (isRestoringHistory) return;
+    const currentState = captureCurrentState();
+    
+    if (historyIndex >= 0) {
+        const lastState = historyStack[historyIndex];
+        if (JSON.stringify(lastState) === JSON.stringify(currentState)) return;
+    }
+    
+    historyStack = historyStack.slice(0, historyIndex + 1);
+    historyStack.push(currentState);
+    if (historyStack.length > 50) historyStack.shift();
+    historyIndex = historyStack.length - 1;
+    updateHistoryButtonsState();
+}
+
+function applyHistoryState(state) {
+    if (!state || !engine) return;
+    isRestoringHistory = true;
+    
+    // 1. Restore Sliders
+    document.querySelectorAll('.custom-slider').forEach(slider => {
+        const uniform = slider.getAttribute('data-uniform');
+        if (uniform && state.sliders[uniform] !== undefined) {
+            const val = state.sliders[uniform];
+            slider.value = val;
+            const displaySpan = slider.parentElement?.querySelector('.val-display');
+            if (displaySpan) {
+                const prefix = val > 0 ? '+' : '';
+                displaySpan.textContent = `${prefix}${val}%`;
+            }
+            if (uniform.endsWith('_lum')) {
+                const baseName = uniform.replace('_lum', '');
+                if (wheelState[baseName]) {
+                    wheelState[baseName].lum = val / 100.0;
+                    updateWheelUniform(baseName);
+                }
+            } else {
+                engine.setUniform(uniform, val / 100.0);
+            }
+        }
+    });
+    
+    // 2. Restore Wheels
+    if (state.wheelState) {
+        Object.keys(state.wheelState).forEach(name => {
+            wheelState[name] = JSON.parse(JSON.stringify(state.wheelState[name]));
+            const wheelContainer = document.querySelector(`[data-uniform="${name}"]`);
+            if (wheelContainer) {
+                const thumb = wheelContainer.querySelector('.color-wheel-thumb');
+                if (thumb) {
+                    const maxDist = wheelContainer.getBoundingClientRect().width / 2 || 70;
+                    const h = wheelState[name].h;
+                    const s = wheelState[name].s;
+                    const angle = (h * Math.PI * 2) - (Math.PI / 2);
+                    const dist = s * maxDist;
+                    const dx = Math.cos(angle) * dist;
+                    const dy = Math.sin(angle) * dist;
+                    thumb.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+                }
+            }
+            updateWheelUniform(name);
+        });
+    }
+    
+    // 3. Restore Mix
+    if (state.mixState) {
+        for (let i = 0; i < 8; i++) {
+            mixState[i] = JSON.parse(JSON.stringify(state.mixState[i]));
+        }
+        updateMixSlidersUI();
+        updateMixUniforms();
+    }
+    
+    // 4. Restore LUT
+    if (state.activeLut) {
+        const lutBtn = document.querySelector(`.lut-btn[data-lut="${state.activeLut}"]`);
+        if (lutBtn && !lutBtn.classList.contains('active')) {
+            lutBtn.click();
+        }
+    }
+    
+    engine.render();
+    isRestoringHistory = false;
+    updateHistoryButtonsState();
+}
+
+function updateHistoryButtonsState() {
+    const undoBtn = document.getElementById('btn-undo-action');
+    const redoBtn = document.getElementById('btn-redo-action');
+    if (undoBtn) undoBtn.style.opacity = (historyIndex > 0) ? '1' : '0.4';
+    if (redoBtn) redoBtn.style.opacity = (historyIndex < historyStack.length - 1) ? '1' : '0.4';
+}
+
+function globalReset() {
+    if (!engine) return;
+    
+    resetSliders();
+    engine.resetState();
+    
+    for (let i = 0; i < 8; i++) {
+        mixState[i] = { h: 0, s: 0, l: 0 };
+    }
+    updateMixSlidersUI();
+    updateMixUniforms();
+    
+    const noneLutBtn = document.querySelector('.lut-btn[data-lut="none"]');
+    if (noneLutBtn) noneLutBtn.click();
+    
+    pushHistoryState();
+    engine.render();
+}
+
+function setupHistory() {
+    const historyWidget = document.getElementById('history-widget');
+    const toggleBtn = document.getElementById('btn-history-toggle');
+    const undoBtn = document.getElementById('btn-undo-action');
+    const redoBtn = document.getElementById('btn-redo-action');
+    const resetBtn = document.getElementById('btn-reset-action');
+    
+    if (toggleBtn && historyWidget) {
+        toggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            historyWidget.classList.toggle('expanded');
+        });
+        
+        document.addEventListener('click', (e) => {
+            if (!historyWidget.contains(e.target)) {
+                historyWidget.classList.remove('expanded');
+            }
+        });
+    }
+    
+    if (undoBtn) {
+        undoBtn.addEventListener('click', () => {
+            if (historyIndex > 0) {
+                historyIndex--;
+                applyHistoryState(historyStack[historyIndex]);
+            }
+        });
+    }
+    
+    if (redoBtn) {
+        redoBtn.addEventListener('click', () => {
+            if (historyIndex < historyStack.length - 1) {
+                historyIndex++;
+                applyHistoryState(historyStack[historyIndex]);
+            }
+        });
+    }
+    
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+            globalReset();
+        });
+    }
 }
