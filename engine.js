@@ -164,12 +164,10 @@ export class LocalLightEngine {
             // --- DaVinci Intermediate Film Curve (DWG/DI Log S-Curve) ---
             vec3 diColor = linearToDI(color);
             
-            // 1. Film Contrast (Cubic Sigmoid S-Curve in DaVinci Intermediate log space)
+            // 1. Film Contrast (S-Curve centered at 0.5 log space for symmetric balance)
             if (u_cinematic_contrast != 0.0) {
-                vec3 diff = diColor - vec3(DV_MID_GRAY);
-                // Cubic soft roll-off prevents highlight/shadow edge artifacts
-                vec3 sCurve = diColor + diff * (vec3(1.0) - abs(diff) * 1.25) * (u_cinematic_contrast * 0.65);
-                diColor = clamp(sCurve, 0.0, 1.0);
+                float factor = 1.0 + u_cinematic_contrast * 0.76;
+                diColor = (diColor - 0.5) * factor + 0.5;
             }
             
             // 2. Shadow Toe (Shapes shadow toe: lift to fade blacks, lower to crush)
