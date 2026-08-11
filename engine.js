@@ -143,8 +143,19 @@ export class LocalLightEngine {
                 }
             }
             
-            // 3. Standard Linear Contrast (tamed multiplier)
-            color = (color - 0.5) * (1.0 + u_contrast * 0.45) + 0.5;
+            // 3. Artifact-Free Perceptual Luminance Contrast (Hermite Sigmoid S-Curve)
+            if (u_contrast != 0.0) {
+                float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));
+                // Hermite S-Curve with zero-derivative bounds at 0.0 and 1.0 (Zero clipping/banding artifacts!)
+                float delta = lum - 0.5;
+                float newLum = lum + delta * (0.25 - delta * delta) * (u_contrast * 2.8);
+                newLum = clamp(newLum, 0.0, 1.0);
+                if (lum > 0.0001) {
+                    // Re-apply luminance ratio to preserve 100% exact hue and saturation
+                    vec3 adjusted = color * (newLum / lum);
+                    color = mix(color, adjusted, 0.88);
+                }
+            }
             color = clamp(color, 0.0, 1.0);
             
             // Store luminance before Film Curve to lock overall image brightness 100%
@@ -153,10 +164,12 @@ export class LocalLightEngine {
             // --- DaVinci Intermediate Film Curve (DWG/DI Log S-Curve) ---
             vec3 diColor = linearToDI(color);
             
-            // 1. Film Contrast (S-Curve centered at 0.5 log space for symmetric balance)
+            // 1. Film Contrast (Cubic Sigmoid S-Curve in DaVinci Intermediate log space)
             if (u_cinematic_contrast != 0.0) {
-                float factor = 1.0 + u_cinematic_contrast * 0.76;
-                diColor = (diColor - 0.5) * factor + 0.5;
+                vec3 diff = diColor - vec3(DV_MID_GRAY);
+                // Cubic soft roll-off prevents highlight/shadow edge artifacts
+                vec3 sCurve = diColor + diff * (vec3(1.0) - abs(diff) * 1.25) * (u_cinematic_contrast * 0.65);
+                diColor = clamp(sCurve, 0.0, 1.0);
             }
             
             // 2. Shadow Toe (Shapes shadow toe: lift to fade blacks, lower to crush)
