@@ -723,8 +723,6 @@ const stopCompare = () => { if (engine) engine.setBypass(false); };
 
 btnCompare.addEventListener('mousedown', startCompare);
 btnCompare.addEventListener('touchstart', startCompare, { passive: true });
-canvas.addEventListener('mousedown', startCompare);
-canvas.addEventListener('touchstart', startCompare, { passive: true });
 
 window.addEventListener('mouseup', stopCompare);
 window.addEventListener('touchend', stopCompare, { passive: true });
@@ -1378,6 +1376,12 @@ function setupGestureZoom() {
         zoomState.scale = zoomState.scale * (1.0 + delta);
         applyTransform();
     }, { passive: false });
+    
+    // 4. Double Click / Double Tap -> Reset Zoom & Pan to Fullwidth (100%)
+    container.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        resetZoomAndPan();
+    });
 }
 
 window.addEventListener('load', () => {
