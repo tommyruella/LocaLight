@@ -1334,9 +1334,21 @@ function setupGestureZoom() {
         }
     }, { passive: true });
     
+    let lastTapTime = 0;
     container.addEventListener('touchend', (e) => {
         if (e.touches.length < 2) initialPinchDist = 0;
         if (e.touches.length === 0) zoomState.isDragging = false;
+        
+        if (e.changedTouches && e.changedTouches.length === 1) {
+            const now = Date.now();
+            const tapDelay = now - lastTapTime;
+            if (tapDelay > 40 && tapDelay < 320) {
+                resetZoomAndPan();
+                lastTapTime = 0;
+                return;
+            }
+            lastTapTime = now;
+        }
     });
     
     // 2. Mouse Drag Pan
