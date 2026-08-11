@@ -716,39 +716,17 @@ btnBack.addEventListener('click', () => {
     fileInputHome.value = '';
 });
 
-// Compare functionality (Hold to view impact of LAST edit, or raw original if at start)
+// Global Overall Compare (Top Button: Hold to view RAW Original photo)
 const btnCompare = document.getElementById('btn-compare');
-let stateBeforeCompare = null;
+const startGlobalCompare = () => { if (engine) engine.setBypass(true); };
+const stopGlobalCompare = () => { if (engine) engine.setBypass(false); };
 
-const startCompare = () => {
-    if (!engine) return;
-    
-    if (historyIndex > 0 && historyStack[historyIndex - 1]) {
-        // Temporarily load previous history step to compare LAST edit impact!
-        stateBeforeCompare = captureCurrentState();
-        applyHistoryState(historyStack[historyIndex - 1]);
-    } else {
-        // At initial step: bypass engine to view original raw photo
-        engine.setBypass(true);
-    }
-};
+btnCompare.addEventListener('mousedown', startGlobalCompare);
+btnCompare.addEventListener('touchstart', startGlobalCompare, { passive: true });
 
-const stopCompare = () => {
-    if (!engine) return;
-    
-    if (stateBeforeCompare) {
-        applyHistoryState(stateBeforeCompare);
-        stateBeforeCompare = null;
-    }
-    engine.setBypass(false);
-};
-
-btnCompare.addEventListener('mousedown', startCompare);
-btnCompare.addEventListener('touchstart', startCompare, { passive: true });
-
-window.addEventListener('mouseup', stopCompare);
-window.addEventListener('touchend', stopCompare, { passive: true });
-window.addEventListener('touchcancel', stopCompare, { passive: true });
+window.addEventListener('mouseup', stopGlobalCompare);
+window.addEventListener('touchend', stopGlobalCompare, { passive: true });
+window.addEventListener('touchcancel', stopGlobalCompare, { passive: true });
 
 fileInputHome.addEventListener('change', (e) => {
     const file = e.target.files[0];
@@ -1320,7 +1298,41 @@ function setupGestureZoom() {
         applyTransform();
     }
     
-    // 1. Mouse Drag & Touch Pan
+    // Hold Screen (450ms) -> Compare Single LAST Edit Impact
+    let screenHoldTimer = null;
+    let isComparingLastEdit = false;
+    let savedCurrentState = null;
+    let holdStartX = 0;
+    let holdStartY = 0;
+    
+    function triggerScreenHoldCompare() {
+        if (!engine) return;
+        if (historyIndex > 0 && historyStack[historyIndex - 1]) {
+            isComparingLastEdit = true;
+            savedCurrentState = captureCurrentState();
+            applyHistoryState(historyStack[historyIndex - 1]);
+        } else {
+            isComparingLastEdit = true;
+            engine.setBypass(true);
+        }
+    }
+    
+    function releaseScreenHoldCompare() {
+        if (screenHoldTimer) {
+            clearTimeout(screenHoldTimer);
+            screenHoldTimer = null;
+        }
+        if (isComparingLastEdit) {
+            if (savedCurrentState) {
+                applyHistoryState(savedCurrentState);
+                savedCurrentState = null;
+            }
+            if (engine) engine.setBypass(false);
+            isComparingLastEdit = false;
+        }
+    }
+
+    // 1. Touch Gestures & Screen Hold
     mainCanvas.style.cursor = 'grab';
     
     let initialPinchDist = 0;
@@ -1328,6 +1340,7 @@ function setupGestureZoom() {
     
     container.addEventListener('touchstart', (e) => {
         if (e.touches.length === 2) {
+            releaseScreenHoldCompare();
             initialPinchDist = Math.hypot(
                 e.touches[0].clientX - e.touches[1].clientX,
                 e.touches[0].clientY - e.touches[1].clientY
@@ -1337,11 +1350,17 @@ function setupGestureZoom() {
             zoomState.isDragging = true;
             zoomState.startX = e.touches[0].clientX - zoomState.panX;
             zoomState.startY = e.touches[0].clientY - zoomState.panY;
+            holdStartX = e.touches[0].clientX;
+            holdStartY = e.touches[0].clientY;
+            
+            releaseScreenHoldCompare();
+            screenHoldTimer = setTimeout(triggerScreenHoldCompare, 450);
         }
     }, { passive: true });
     
     container.addEventListener('touchmove', (e) => {
         if (e.touches.length === 2 && initialPinchDist > 0) {
+            releaseScreenHoldCompare();
             const dist = Math.hypot(
                 e.touches[0].clientX - e.touches[1].clientX,
                 e.touches[0].clientY - e.touches[1].clientY
@@ -1350,6 +1369,9 @@ function setupGestureZoom() {
             zoomState.scale = initialPinchScale * scaleFactor;
             applyTransform();
         } else if (e.touches.length === 1 && zoomState.isDragging) {
+            if (Math.hypot(e.touches[0].clientX - holdStartX, e.touches[0].clientY - holdStartY) > 6) {
+                if (screenHoldTimer) { clearTimeout(screenHoldTimer); screenHoldTimer = null; }
+            }
             zoomState.panX = e.touches[0].clientX - zoomState.startX;
             zoomState.panY = e.touches[0].clientY - zoomState.startY;
             applyTransform();
@@ -1358,6 +1380,7 @@ function setupGestureZoom() {
     
     let lastTapTime = 0;
     container.addEventListener('touchend', (e) => {
+        releaseScreenHoldCompare();
         if (e.touches.length < 2) initialPinchDist = 0;
         if (e.touches.length === 0) zoomState.isDragging = false;
         
@@ -1373,19 +1396,28 @@ function setupGestureZoom() {
         }
     });
     
-    // 2. Mouse Drag Pan
+    // 2. Mouse Drag Pan & Mouse Hold
     mainCanvas.addEventListener('pointerdown', (e) => {
         if (e.pointerType === 'touch') return;
         zoomState.isDragging = true;
         zoomState.startX = e.clientX - zoomState.panX;
         zoomState.startY = e.clientY - zoomState.panY;
+        holdStartX = e.clientX;
+        holdStartY = e.clientY;
         mainCanvas.style.cursor = 'grabbing';
+        
+        releaseScreenHoldCompare();
+        screenHoldTimer = setTimeout(triggerScreenHoldCompare, 450);
+        
         try { mainCanvas.setPointerCapture(e.pointerId); } catch(err) {}
     });
     
     mainCanvas.addEventListener('pointermove', (e) => {
         if (e.pointerType === 'touch') return;
         if (zoomState.isDragging) {
+            if (Math.hypot(e.clientX - holdStartX, e.clientY - holdStartY) > 6) {
+                if (screenHoldTimer) { clearTimeout(screenHoldTimer); screenHoldTimer = null; }
+            }
             zoomState.panX = e.clientX - zoomState.startX;
             zoomState.panY = e.clientY - zoomState.startY;
             applyTransform();
@@ -1393,6 +1425,7 @@ function setupGestureZoom() {
     });
     
     const stopPan = (e) => {
+        releaseScreenHoldCompare();
         if (zoomState.isDragging) {
             zoomState.isDragging = false;
             mainCanvas.style.cursor = 'grab';
