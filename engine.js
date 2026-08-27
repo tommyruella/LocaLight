@@ -78,26 +78,6 @@ vec3 encodeSRGB(vec3 linear) {
 }
 `;
 
-const GLSL_WHITE_BALANCE = `
-const mat3 M_SRGB_TO_LMS = mat3(
-    0.422725, 0.055700, 0.021383,
-    0.491345, 0.961534, 0.087642,
-    0.027358, 0.023184, 0.980508
-);
-
-const mat3 M_LMS_TO_SRGB = mat3(
-    2.538045, -0.146004, -0.042299,
-    -1.293277, 1.116648, -0.071607,
-    -0.040237, -0.022329, 1.022753
-);
-
-vec3 whiteBalance(vec3 color, vec3 wb_scale) {
-    if (wb_scale.x == 1.0 && wb_scale.y == 1.0 && wb_scale.z == 1.0) return color;
-    vec3 lms = M_SRGB_TO_LMS * color;
-    lms *= wb_scale;
-    return M_LMS_TO_SRGB * lms;
-}
-`;
 
         const vsSource = `#version 300 es
         in vec2 a_position;
@@ -207,7 +187,7 @@ vec3 whiteBalance(vec3 color, vec3 wb_scale) {
         
         // --- ASC CDL (Lift/Gamma/Gain) ---
         color.rgb = color.rgb * u_gain;
-        color.rgb = color.rgb + u_lift * (1.0 - color.rgb);
+        color.rgb = color.rgb + u_lift * max(1.0 - color.rgb, vec3(0.0));
         color.rgb = pow(max(color.rgb, vec3(0.0)), vec3(1.0) / max(u_gamma, vec3(1e-5)));
 
         outColor = color;
