@@ -7,6 +7,14 @@ const editorWorkspace = document.getElementById('editor-workspace');
 const fileInputHome = document.getElementById('file-input-home');
 const btnBack = document.getElementById('btn-back');
 const btnExport = document.getElementById('btn-export');
+const btnLayers = document.getElementById('btn-layers');
+const layersDropdown = document.getElementById('layers-dropdown');
+const btnAddLayer = document.getElementById('btn-add-layer');
+const layersList = document.getElementById('layers-list');
+const layerOptionsModal = document.getElementById('layer-options-modal');
+const btnLayerDuplicate = document.getElementById('btn-layer-duplicate');
+const btnLayerDelete = document.getElementById('btn-layer-delete');
+const btnLayerCancel = document.getElementById('btn-layer-cancel');
 const canvas = document.getElementById('main-canvas');
 
 // State
@@ -42,13 +50,13 @@ function initEngine() {
     }
 }
 
-const wheelState = {
+let wheelState = {
     u_lift: { h: 0, s: 0, lum: 0 },
     u_gamma: { h: 0, s: 0, lum: 0 },
     u_gain: { h: 0, s: 0, lum: 0 }
 };
 
-const mixState = [
+let mixState = [
     {h: 0, s: 0, l: 0}, // 0 Red
     {h: 0, s: 0, l: 0}, // 1 Orange
     {h: 0, s: 0, l: 0}, // 2 Yellow
@@ -58,6 +66,33 @@ const mixState = [
     {h: 0, s: 0, l: 0}, // 6 Purple
     {h: 0, s: 0, l: 0}  // 7 Magenta
 ];
+
+let layers = [];
+let activeLayerIndex = 0;
+
+function createDefaultLayerState(name = "Livello", blendMode = "normal", isBase = false) {
+    return {
+        id: 'layer_' + Date.now() + '_' + Math.floor(Math.random()*1000),
+        name: name,
+        blendMode: blendMode,
+        opacity: 1.0,
+        visible: true,
+        isBase: isBase,
+        state: {
+            sliders: {}, // Will be populated dynamically on save or from UI
+            wheelState: {
+                u_lift: { h: 0, s: 0, lum: 0 },
+                u_gamma: { h: 0, s: 0, lum: 0 },
+                u_gain: { h: 0, s: 0, lum: 0 }
+            },
+            mixState: [
+                {h: 0, s: 0, l: 0}, {h: 0, s: 0, l: 0}, {h: 0, s: 0, l: 0}, {h: 0, s: 0, l: 0},
+                {h: 0, s: 0, l: 0}, {h: 0, s: 0, l: 0}, {h: 0, s: 0, l: 0}, {h: 0, s: 0, l: 0}
+            ],
+            activeLut: 'none'
+        }
+    };
+}
 let activeMixColor = 0;
 const mixBaseHues = [0, 30, 60, 120, 180, 240, 270, 300];
 
@@ -100,7 +135,7 @@ function updateWheelUniform(name) {
         let lumMult = Math.pow(2.0, state.lum * 2.0);
         outVec = [ rgb[0] * lumMult, rgb[1] * lumMult, rgb[2] * lumMult ];
     }
-    engine.setUniform(name, outVec);
+    triggerEngineRender();
 }
 
 function setupWheels() {
@@ -213,7 +248,7 @@ function setupSliders() {
                         updateWheelUniform(baseName);
                     }
                 } else if (engine) {
-                    engine.setUniform(uniformName, val);
+                    triggerEngineRender();
                 }
             });
             input.addEventListener('change', () => pushHistoryState());
@@ -287,6 +322,7 @@ function setupMenus() {
         'Mix': document.getElementById('panel-mix'),
         'WB': document.getElementById('panel-wb'),
         'Details': document.getElementById('panel-details'),
+        'Effects': document.getElementById('panel-effects'),
         'LUTs': document.getElementById('panel-luts'),
         'Wheels': document.getElementById('panel-wheels')
     };
@@ -715,11 +751,268 @@ btnBack.addEventListener('click', () => {
     currentImage = null;
     fileInputHome.value = '';
 });
+// Layers Logic
+btnLayers.addEventListener('click', (e) => {
+    e.stopPropagation();
+    layersDropdown.classList.toggle('active');
+    if (layersDropdown.classList.contains('active')) {
+        renderLayersList();
+    }
+});
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    if (layersDropdown && layersDropdown.classList.contains('active') && !layersDropdown.contains(e.target) && e.target !== btnLayers && !btnLayers.contains(e.target)) {
+        layersDropdown.classList.remove('active');
+    }
+});
+
+btnAddLayer.addEventListener('click', () => {
+    captureCurrentState(); // Sync current UI first
+    const newLayer = createDefaultLayerState(`Livello ${layers.length}`);
+    layers.push(newLayer);
+    activeLayerIndex = layers.length - 1;
+    applyHistoryState({ layers, activeLayerIndex }); // Sync UI to new layer
+    
+    // Force reset isRestoringHistory so we can push this structural change immediately
+    isRestoringHistory = false;
+    pushHistoryState();
+});
+
+let layerActionTargetId = null;
+
+let draggedLayerIndex = null;
+
+function renderLayersList() {
+    if (!layersList) return;
+    layersList.innerHTML = '';
+    
+    // Render in reverse so top layer is visually at the top
+    const displayLayers = [...layers].reverse();
+    
+    displayLayers.forEach((layer) => {
+        const trueIndex = layers.indexOf(layer);
+        
+        const item = document.createElement('div');
+        item.className = 'layer-item';
+        if (trueIndex === activeLayerIndex) item.classList.add('active');
+        item.dataset.index = trueIndex;
+        
+
+        // Header (Eye, Name, Options)
+        const header = document.createElement('div');
+        header.className = 'layer-header';
+        
+        const btnEye = document.createElement('button');
+        btnEye.className = `layer-visibility ${layer.visible ? '' : 'hidden'}`;
+        btnEye.innerHTML = layer.visible ? 
+            `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>` : 
+            `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+        btnEye.onclick = (e) => {
+            e.stopPropagation();
+            layer.visible = !layer.visible;
+            btnEye.classList.toggle('hidden', !layer.visible);
+            btnEye.innerHTML = layer.visible ? 
+                `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>` : 
+                `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+            if (engine) triggerEngineRender();
+            pushHistoryState();
+        };
+        
+        const nameEl = document.createElement('h4');
+        nameEl.className = 'layer-name';
+        nameEl.textContent = layer.name;
+        nameEl.onclick = () => switchLayer(trueIndex);
+        
+        const btnMore = document.createElement('button');
+        btnMore.className = 'layer-options';
+        btnMore.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>`;
+        
+        if (layer.isBase) {
+            btnMore.style.opacity = '0.2';
+            btnMore.style.pointerEvents = 'none';
+        } else {
+            btnMore.onclick = (e) => {
+                e.stopPropagation();
+                layerActionTargetId = layer.id;
+                layerOptionsModal.classList.add('active');
+            };
+        }
+        
+        header.appendChild(btnEye);
+        header.appendChild(nameEl);
+        
+        // Move Up / Move Down buttons
+        if (!layer.isBase) {
+            const reorderDiv = document.createElement('div');
+            reorderDiv.style.display = 'flex';
+            reorderDiv.style.flexDirection = 'column';
+            reorderDiv.style.marginLeft = '8px';
+            reorderDiv.style.marginRight = '8px';
+            reorderDiv.style.justifyContent = 'center';
+            
+            const btnUp = document.createElement('button');
+            btnUp.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>`;
+            btnUp.className = 'island-btn';
+            btnUp.style.width = '24px'; btnUp.style.height = '16px';
+            btnUp.style.opacity = (trueIndex === layers.length - 1) ? '0.2' : '1';
+            btnUp.style.pointerEvents = (trueIndex === layers.length - 1) ? 'none' : 'auto';
+            btnUp.onclick = (e) => {
+                e.stopPropagation();
+                if (trueIndex < layers.length - 1) {
+                    const temp = layers[trueIndex];
+                    layers[trueIndex] = layers[trueIndex + 1];
+                    layers[trueIndex + 1] = temp;
+                    if (activeLayerIndex === trueIndex) activeLayerIndex = trueIndex + 1;
+                    else if (activeLayerIndex === trueIndex + 1) activeLayerIndex = trueIndex;
+                    applyHistoryState({ layers, activeLayerIndex });
+                    pushHistoryState();
+                    if (engine) triggerEngineRender();
+                }
+            };
+
+            const btnDown = document.createElement('button');
+            btnDown.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+            btnDown.className = 'island-btn';
+            btnDown.style.width = '24px'; btnDown.style.height = '16px';
+            btnDown.style.opacity = (trueIndex === 1) ? '0.2' : '1';
+            btnDown.style.pointerEvents = (trueIndex === 1) ? 'none' : 'auto';
+            btnDown.onclick = (e) => {
+                e.stopPropagation();
+                if (trueIndex > 1) {
+                    const temp = layers[trueIndex];
+                    layers[trueIndex] = layers[trueIndex - 1];
+                    layers[trueIndex - 1] = temp;
+                    if (activeLayerIndex === trueIndex) activeLayerIndex = trueIndex - 1;
+                    else if (activeLayerIndex === trueIndex - 1) activeLayerIndex = trueIndex;
+                    applyHistoryState({ layers, activeLayerIndex });
+                    pushHistoryState();
+                    if (engine) triggerEngineRender();
+                }
+            };
+
+            reorderDiv.appendChild(btnUp);
+            reorderDiv.appendChild(btnDown);
+            header.appendChild(reorderDiv);
+        }
+        
+        header.appendChild(btnMore);
+        item.appendChild(header);
+        
+        // Controls (Blend mode, Opacity)
+        if (!layer.isBase) {
+            const controls = document.createElement('div');
+            controls.className = 'layer-controls';
+            
+            const blendSelect = document.createElement('select');
+            blendSelect.className = 'layer-blend-mode';
+            const modes = [
+                {val: 'normal', text: 'Normale'},
+                {val: 'multiply', text: 'Moltiplica'},
+                {val: 'screen', text: 'Schermo'},
+                {val: 'overlay', text: 'Sovrapponi'}
+            ];
+            modes.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.val;
+                opt.textContent = m.text;
+                if (layer.blendMode === m.val) opt.selected = true;
+                blendSelect.appendChild(opt);
+            });
+            blendSelect.onchange = (e) => {
+                layer.blendMode = e.target.value;
+                if (engine) triggerEngineRender();
+                pushHistoryState();
+            };
+            
+            const opacityWrapper = document.createElement('div');
+            opacityWrapper.className = 'layer-opacity-wrapper';
+            
+            const opacitySlider = document.createElement('input');
+            opacitySlider.type = 'range';
+            opacitySlider.className = 'layer-opacity-slider';
+            opacitySlider.min = '0';
+            opacitySlider.max = '100';
+            opacitySlider.value = (layer.opacity * 100).toFixed(0);
+            
+            const opacityVal = document.createElement('span');
+            opacityVal.className = 'layer-opacity-val';
+            opacityVal.textContent = opacitySlider.value + '%';
+            
+            opacitySlider.oninput = (e) => {
+                opacityVal.textContent = e.target.value + '%';
+                layer.opacity = parseFloat(e.target.value) / 100.0;
+                if (engine) triggerEngineRender();
+            };
+            opacitySlider.onchange = () => {
+                pushHistoryState();
+            };
+            
+            opacityWrapper.appendChild(opacitySlider);
+            opacityWrapper.appendChild(opacityVal);
+            
+            controls.appendChild(blendSelect);
+            controls.appendChild(opacityWrapper);
+            
+            item.appendChild(controls);
+        }
+        
+        layersList.appendChild(item);
+    });
+}
+
+function switchLayer(index) {
+    if (index === activeLayerIndex) return;
+    captureCurrentState(); // save current sliders to active layer
+    activeLayerIndex = index;
+    // Update UI with new active layer state
+    applyHistoryState({ layers, activeLayerIndex });
+    renderLayersList(); // updates visual active state
+}
+
+btnLayerCancel.addEventListener('click', () => {
+    layerOptionsModal.classList.remove('active');
+    layerActionTargetId = null;
+});
+
+btnLayerDelete.addEventListener('click', () => {
+    if (layerActionTargetId) {
+        const idx = layers.findIndex(l => l.id === layerActionTargetId);
+        if (idx > 0) { // cant delete base
+            layers.splice(idx, 1);
+            if (activeLayerIndex >= layers.length) activeLayerIndex = layers.length - 1;
+            applyHistoryState({ layers, activeLayerIndex }); // reset UI if active layer was deleted
+            pushHistoryState();
+            if (engine) triggerEngineRender();
+        }
+    }
+    layerOptionsModal.classList.remove('active');
+    layerActionTargetId = null;
+});
+
+btnLayerDuplicate.addEventListener('click', () => {
+    if (layerActionTargetId) {
+        const srcLayer = layers.find(l => l.id === layerActionTargetId);
+        if (srcLayer) {
+            const newLayer = JSON.parse(JSON.stringify(srcLayer));
+            newLayer.id = 'layer_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+            newLayer.name = newLayer.name + " copia";
+            newLayer.isBase = false; // Just in case we duplicated base (though UI disables it)
+            layers.push(newLayer);
+            activeLayerIndex = layers.length - 1;
+            applyHistoryState({ layers, activeLayerIndex });
+            pushHistoryState();
+            if (engine) triggerEngineRender();
+        }
+    }
+    layerOptionsModal.classList.remove('active');
+    layerActionTargetId = null;
+});
 
 // Global Overall Compare (Top Button: Hold to view RAW Original photo)
 const btnCompare = document.getElementById('btn-compare');
-const startGlobalCompare = () => { if (engine) engine.setBypass(true); };
-const stopGlobalCompare = () => { if (engine) engine.setBypass(false); };
+const startGlobalCompare = () => { if (engine) { engine.setBypass(true); triggerEngineRender(); } };
+const stopGlobalCompare = () => { if (engine) { engine.setBypass(false); triggerEngineRender(); } };
 
 btnCompare.addEventListener('mousedown', startGlobalCompare);
 btnCompare.addEventListener('touchstart', startGlobalCompare, { passive: true });
@@ -937,7 +1230,7 @@ window.addEventListener('load', () => setupExportModal());
 
 function openExportModal() {
     if (!currentImage || !engine) return;
-    engine.render();
+    triggerEngineRender();
     const modal = document.getElementById('export-modal');
     if (modal) modal.classList.add('active');
     updateExportSizeEstimate();
@@ -1017,14 +1310,40 @@ async function executeExport() {
     const link = document.createElement('a');
     link.download = filename;
     link.href = blobUrl;
-    document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    
+    // Cleanup to avoid memory leaks
+    setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+    }, 100);
 }
 
 btnExport.addEventListener('click', () => {
-    openExportModal();
+    if (!isMobileOrIOS && window.showSaveFilePicker) {
+        // Direct save on Mac/Browser via File System Access API
+        if (!engine) return;
+        canvas.toBlob(async (blob) => {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: 'localight_edited.jpg',
+                    types: [{
+                        description: 'JPEG Image',
+                        accept: {'image/jpeg': ['.jpg', '.jpeg']}
+                    }]
+                });
+                const writable = await handle.createWritable();
+                await writable.write(blob);
+                await writable.close();
+            } catch (err) {
+                if (err.name !== 'AbortError') doExport('jpeg');
+            }
+        }, 'image/jpeg', 0.95);
+    } else if (!isMobileOrIOS) {
+        // Fallback direct save for older browsers
+        doExport('jpeg');
+    } else {
+        openExportModal();
+    }
 });
 
 function updateMixUniforms() {
@@ -1036,7 +1355,7 @@ function updateMixUniforms() {
         flatMix[i*3+2] = mixState[i].l;
     }
     engine.state['u_hsl_shifts'] = flatMix;
-    engine.render();
+    triggerEngineRender();
 }
 
 function updateMixSlidersUI() {
@@ -1094,19 +1413,24 @@ let historyIndex = -1;
 let isRestoringHistory = false;
 
 function captureCurrentState() {
-    const slidersData = {};
-    document.querySelectorAll('.custom-slider').forEach(slider => {
-        const uniform = slider.getAttribute('data-uniform');
-        if (uniform) {
-            slidersData[uniform] = parseFloat(slider.value);
-        }
-    });
-    
+    if (layers.length > 0 && layers[activeLayerIndex]) {
+        const slidersData = {};
+        document.querySelectorAll('.custom-slider').forEach(slider => {
+            const uniform = slider.getAttribute('data-uniform');
+            if (uniform) {
+                slidersData[uniform] = parseFloat(slider.value);
+            }
+        });
+        
+        layers[activeLayerIndex].state.sliders = slidersData;
+        layers[activeLayerIndex].state.wheelState = JSON.parse(JSON.stringify(wheelState));
+        layers[activeLayerIndex].state.mixState = JSON.parse(JSON.stringify(mixState));
+        layers[activeLayerIndex].state.activeLut = document.querySelector('.lut-btn.active')?.dataset.lut || 'none';
+    }
+
     return {
-        sliders: slidersData,
-        wheelState: JSON.parse(JSON.stringify(wheelState)),
-        mixState: JSON.parse(JSON.stringify(mixState)),
-        activeLut: document.querySelector('.lut-btn.active')?.dataset.lut || 'none'
+        layers: JSON.parse(JSON.stringify(layers)),
+        activeLayerIndex: activeLayerIndex
     };
 }
 
@@ -1127,37 +1451,149 @@ function pushHistoryState() {
     saveCurrentProject();
 }
 
+function computeEngineStateForLayer(layerState) {
+    const s = {};
+    
+    // Sliders
+    // Semantic mapping for sliders
+    s['u_exposure'] = (layerState.sliders['u_exposure'] || 0) / 20.0; // UI [-100, 100] -> [-5 EV, +5 EV]
+    
+    // Other sliders temporary mapping
+    // Other sliders mapped to semantic ranges [-1.0, 1.0]
+    ['u_contrast', 'u_highlights', 'u_shadows', 'u_whites', 'u_blacks', 'u_temperature', 'u_tint'].forEach(name => {
+        s[name] = (layerState.sliders[name] || 0) / 100.0;
+    });
+    // Disabled/not-yet-refactored sliders mapped to 0 or unused
+    ['u_brightness', 'u_cinematic_contrast', 'u_saturation', 'u_cinematic_saturation', 'u_vibrance', 'u_shadow_toe', 'u_highlight_shoulder'].forEach(name => {
+        s[name] = 0.0; 
+    });
+    
+    s['u_sharpness'] = (layerState.sliders['u_sharpness'] || 0) / 100.0;
+    s['u_clarity'] = (layerState.sliders['u_clarity'] || 0) / 100.0;
+    s['u_lut_intensity'] = (layerState.sliders['u_lut_intensity'] !== undefined ? layerState.sliders['u_lut_intensity'] : 100) / 100.0;
+    
+    // Effects
+    s['u_grain'] = (layerState.sliders['u_grain'] || 0) / 100.0;
+    s['u_noise'] = (layerState.sliders['u_noise'] || 0) / 100.0;
+    s['u_halation'] = (layerState.sliders['u_halation'] || 0) / 100.0;
+    s['u_glow'] = (layerState.sliders['u_glow'] || 0) / 100.0;
+
+    // Wheels
+    const w = layerState.wheelState;
+    if (w) {
+        ['u_lift', 'u_gamma', 'u_gain'].forEach(name => {
+            if (w[name]) {
+                const rgb = hsvToRgb(w[name].h, w[name].s * 0.35, 1.0);
+                if (name === 'u_lift') {
+                    let lum = w[name].lum * 0.2;
+                    s[name] = [(rgb[0]-1)*0.2+lum, (rgb[1]-1)*0.2+lum, (rgb[2]-1)*0.2+lum];
+                } else if (name === 'u_gamma') {
+                    let lumMult = Math.pow(2.0, w[name].lum * 1.5);
+                    s[name] = [rgb[0]*lumMult, rgb[1]*lumMult, rgb[2]*lumMult];
+                } else {
+                    let lumMult = Math.pow(2.0, w[name].lum * 2.0);
+                    s[name] = [rgb[0]*lumMult, rgb[1]*lumMult, rgb[2]*lumMult];
+                }
+            } else {
+                s[name] = name === 'u_lift' ? [0,0,0] : [1,1,1];
+            }
+        });
+    } else {
+        s['u_lift'] = [0,0,0]; s['u_gamma'] = [1,1,1]; s['u_gain'] = [1,1,1];
+    }
+    
+    // Mix
+    const m = layerState.mixState;
+    if (m) {
+        const flat = new Float32Array(24);
+        for(let i=0; i<8; i++){
+            if(m[i]) {
+                flat[i*3] = m[i].h;
+                flat[i*3+1] = m[i].s;
+                flat[i*3+2] = m[i].l;
+            }
+        }
+        s['u_hsl_shifts'] = flat;
+    } else {
+        s['u_hsl_shifts'] = new Float32Array(24);
+    }
+    
+    s['activeLut'] = layerState.activeLut || 'none';
+    
+    return s;
+}
+
+let renderPending = false;
+function triggerEngineRender() {
+    if (!engine || renderPending) return;
+    renderPending = true;
+    requestAnimationFrame(() => {
+        renderPending = false;
+        
+        // In case no layers, use default dummy
+        if (layers.length === 0) {
+            layers.push(createDefaultLayerState("Base", "normal", true));
+        }
+        
+        // Synchronize the current active UI into the active layer before computing
+        if (layers[activeLayerIndex]) {
+            captureCurrentState();
+        }
+        
+        layers.forEach(layer => {
+            layer.engineState = computeEngineStateForLayer(layer.state);
+        });
+        
+        console.log('[RENDER] Layers being sent to engine:');
+        layers.forEach((l, i) => {
+            const es = l.engineState;
+            console.log(`  Layer ${i} "${l.name}" visible=${l.visible} exposure=${es?.u_exposure} brightness=${es?.u_brightness} sliders_exposure=${l.state?.sliders?.u_exposure}`);
+        });
+        
+        engine.render(layers);
+    });
+}
+
 function applyHistoryState(state) {
     if (!state || !engine) return;
     isRestoringHistory = true;
+
+    if (!state.layers) {
+        layers = [createDefaultLayerState("Base", "normal", true)];
+        activeLayerIndex = 0;
+        layers[0].state = {
+            sliders: state.sliders || {},
+            wheelState: state.wheelState || JSON.parse(JSON.stringify(wheelState)),
+            mixState: state.mixState || JSON.parse(JSON.stringify(mixState)),
+            activeLut: state.activeLut || 'none'
+        };
+    } else {
+        layers = JSON.parse(JSON.stringify(state.layers));
+        activeLayerIndex = state.activeLayerIndex;
+    }
+    
+    if (typeof renderLayersList === 'function') renderLayersList();
+
+    const activeState = layers[activeLayerIndex].state;
     
     // 1. Restore Sliders
     document.querySelectorAll('.custom-slider').forEach(slider => {
         const uniform = slider.getAttribute('data-uniform');
-        if (uniform && state.sliders[uniform] !== undefined) {
-            const val = state.sliders[uniform];
+        if (uniform) {
+            const val = activeState.sliders[uniform] || 0;
             slider.value = val;
             const displaySpan = slider.parentElement?.querySelector('.val-display');
             if (displaySpan) {
                 const prefix = val > 0 ? '+' : '';
-                displaySpan.textContent = `${prefix}${val}%`;
-            }
-            if (uniform.endsWith('_lum')) {
-                const baseName = uniform.replace('_lum', '');
-                if (wheelState[baseName]) {
-                    wheelState[baseName].lum = val / 100.0;
-                    updateWheelUniform(baseName);
-                }
-            } else {
-                engine.setUniform(uniform, val / 100.0);
+                displaySpan.textContent = val === 0 ? '0%' : `${prefix}${val}%`;
             }
         }
     });
     
     // 2. Restore Wheels
-    if (state.wheelState) {
-        Object.keys(state.wheelState).forEach(name => {
-            wheelState[name] = JSON.parse(JSON.stringify(state.wheelState[name]));
+    if (activeState.wheelState) {
+        Object.keys(activeState.wheelState).forEach(name => {
+            wheelState[name] = JSON.parse(JSON.stringify(activeState.wheelState[name]));
             const wheelContainer = document.querySelector(`[data-uniform="${name}"]`);
             if (wheelContainer) {
                 const thumb = wheelContainer.querySelector('.color-wheel-thumb');
@@ -1172,28 +1608,31 @@ function applyHistoryState(state) {
                     thumb.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
                 }
             }
-            updateWheelUniform(name);
         });
     }
     
     // 3. Restore Mix
-    if (state.mixState) {
+    if (activeState.mixState) {
         for (let i = 0; i < 8; i++) {
-            mixState[i] = JSON.parse(JSON.stringify(state.mixState[i]));
+            mixState[i] = JSON.parse(JSON.stringify(activeState.mixState[i]));
         }
         updateMixSlidersUI();
-        updateMixUniforms();
     }
     
     // 4. Restore LUT
-    if (state.activeLut) {
-        const lutBtn = document.querySelector(`.lut-btn[data-lut="${state.activeLut}"]`);
+    if (activeState.activeLut) {
+        const lutBtn = document.querySelector(`.lut-btn[data-lut="${activeState.activeLut}"]`);
         if (lutBtn && !lutBtn.classList.contains('active')) {
-            lutBtn.click();
+            document.querySelectorAll('.lut-btn').forEach(btn => btn.classList.remove('active'));
+            lutBtn.classList.add('active');
         }
+    } else {
+        document.querySelectorAll('.lut-btn').forEach(btn => btn.classList.remove('active'));
+        const noneLutBtn = document.querySelector('.lut-btn[data-lut="none"]');
+        if(noneLutBtn) noneLutBtn.classList.add('active');
     }
     
-    engine.render();
+    triggerEngineRender();
     isRestoringHistory = false;
     updateHistoryButtonsState();
 }
@@ -1221,7 +1660,7 @@ function globalReset() {
     if (noneLutBtn) noneLutBtn.click();
     
     pushHistoryState();
-    engine.render();
+    triggerEngineRender();
 }
 
 function setupHistory() {
@@ -1314,6 +1753,7 @@ function setupGestureZoom() {
         } else {
             isComparingLastEdit = true;
             engine.setBypass(true);
+            triggerEngineRender();
         }
     }
     
@@ -1327,7 +1767,10 @@ function setupGestureZoom() {
                 applyHistoryState(savedCurrentState);
                 savedCurrentState = null;
             }
-            if (engine) engine.setBypass(false);
+            if (engine) {
+                engine.setBypass(false);
+                triggerEngineRender();
+            }
             isComparingLastEdit = false;
         }
     }

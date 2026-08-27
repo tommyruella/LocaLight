@@ -137,6 +137,24 @@
         </div>
     </div>
 
+    <!-- Layer Options Modal -->
+    <div class="action-sheet-overlay" id="layer-options-modal">
+        <div class="action-sheet-content">
+            <div class="action-sheet-header">
+                <span id="layer-options-title">Opzioni Livello</span>
+            </div>
+            <button class="action-sheet-item" id="btn-layer-duplicate">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                Duplica Livello
+            </button>
+            <button class="action-sheet-item danger" id="btn-layer-delete">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                Elimina Livello
+            </button>
+            <button class="action-sheet-item cancel" id="btn-layer-cancel">Annulla</button>
+        </div>
+    </div>
+
     <!-- Editor Workspace -->
     <main id="editor-workspace" class="screen">
         <header class="editor-header">
@@ -173,10 +191,29 @@
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg>
                 </button>
 
+                <!-- Layers Button -->
+                <button class="island-btn" id="btn-layers" title="Layers">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 12 12 17 22 12"></polyline><polyline points="2 17 12 22 22 17"></polyline></svg>
+                </button>
+
                 <!-- Export Button -->
                 <button class="island-btn export-btn" id="btn-export" title="Export Image">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
                 </button>
+            </div>
+            
+            <!-- Layers Dropdown Menu -->
+            <div class="layers-dropdown" id="layers-dropdown">
+                <div class="layers-dropdown-header">
+                    <span style="font-size: 15px; font-weight: 600; color: #fff;">Livelli</span>
+                    <button class="primary-btn" id="btn-add-layer" style="padding: 6px 12px; height: 30px; border-radius: 15px; font-size: 13px; font-weight: 600; gap: 4px; background: rgba(255,255,255,0.15);">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        Nuovo
+                    </button>
+                </div>
+                <div class="layers-list-container" id="layers-list">
+                    <!-- Layer items will be injected here via JS -->
+                </div>
             </div>
         </header>
         
@@ -330,6 +367,32 @@
                 </div>
             </div>
 
+            <!-- Effects Panel -->
+            <div class="sliders-panel" id="panel-effects" style="display: none;">
+                <div class="panel-header">
+                    <h3>Effects</h3>
+                    <button class="info-btn"><svg class="collapse-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+                </div>
+                <div class="sliders-list">
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Grain</span><span class="val-display">0%</span></div>
+                        <input type="range" min="0" max="100" value="0" class="custom-slider" data-uniform="u_grain">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Noise</span><span class="val-display">0%</span></div>
+                        <input type="range" min="0" max="100" value="0" class="custom-slider" data-uniform="u_noise">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Halation</span><span class="val-display">0%</span></div>
+                        <input type="range" min="0" max="100" value="0" class="custom-slider" data-uniform="u_halation">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-info"><span>Glow</span><span class="val-display">0%</span></div>
+                        <input type="range" min="0" max="100" value="0" class="custom-slider" data-uniform="u_glow">
+                    </div>
+                </div>
+            </div>
+
             <!-- Wheels Panel -->
             <div class="sliders-panel" id="panel-wheels" style="display: none;">
                 <div class="panel-header" style="justify-content: center; cursor: pointer;">
@@ -436,6 +499,7 @@
                     <button class="sub-nav-btn">Mix</button>
                     <button class="sub-nav-btn">WB</button>
                     <button class="sub-nav-btn">Details</button>
+                    <button class="sub-nav-btn">Effects</button>
                     <button class="sub-nav-btn">Wheels</button>
                     <button class="sub-nav-btn">LUTs</button>
                 </div>

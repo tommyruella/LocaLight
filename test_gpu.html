@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GPU vs CPU Validation</title>
+    <style>body { font-family: monospace; background: #111; color: #eee; padding: 20px; }</style>
+</head>
+<body>
+    <h2>Milestone 4 - White Balance Validation</h2>
+    <div id="output"></div>
+    <!-- Load scripts -->
+    <script src="reference.js"></script>
+    <script type="module">
+        import { LocalLightEngine } from './engine.js';
+        
+        const log = (msg) => {
+            document.getElementById('output').innerHTML += msg + "<br>";
+        };
+        
+        async function runTests() {
+            log("Initializing WebGL2 Engine...");
+            const canvas = document.createElement('canvas');
+            canvas.width = 1;
+            canvas.height = 1;
+            const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
+            
+            // We'll create a minimal mock of the engine just to run the shader on 1 pixel
+            // Actually, LocalLightEngine expects an image element. We can create a 1x1 image, load it,
+            // set uniforms, and read the FBO.
+            
+            // Better: we can manually compile the shader using the exported engine strings!
+            // Wait, we can't easily extract strings since they are local to initShaders.
+            // Let's just instantiate LocalLightEngine, pass a 1x1 image, and hijack its FBO!
+            
+            const engine = new LocalLightEngine(canvas);
+            if (!engine.gl) { log("WebGL2 not supported."); return; }
+            
+            const runTestCase = (r, g, b, temp, tint, name) => {
+                log(`<br><b>Test: ${name} (RGB: ${r}, ${g}, ${b} | Temp: ${temp}, Tint: ${tint})</b>`);
+                
+                // 1. CPU Reference
+                const cpuOutput = ColorReference.whiteBalance([r, g, b], temp, tint);
+                log(`CPU Output: [${cpuOutput[0].toFixed(5)}, ${cpuOutput[1].toFixed(5)}, ${cpuOutput[2].toFixed(5)}]`);
+                
+                // 2. GPU execution
+                // We create a float32 texture of 1x1 with the RGB values
+                const tex = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, tex);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, new Float32Array([r, g, b, 1.0]));
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                
+                // We render single layer state directly to an FBO
+                const fbo = engine.createFboAndTexture(1, 1, true); // useFloat = true
+                
+                const state = { u_exposure: 0.0, u_temperature: temp, u_tint: tint };
+                // Need to set bypass = false
+                engine.setBypass(false);
+                
+                // Run Pass 1 directly (Base Pass)
+                gl.useProgram(engine.baseProgram);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.fbo);
+                gl.viewport(0, 0, 1, 1);
+                engine.bindQuad(engine.baseProgram);
+                
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, tex);
+                gl.uniform1i(engine.baseLocs['u_image'], 0);
+                
+                // We are passing linear RGB, so u_is_srgb_input = false
+                gl.uniform1i(engine.baseLocs['u_is_srgb_input'], 0);
+                gl.uniform1f(engine.baseLocs['u_exposure'], 0.0);
+                
+                const wbScale = engine.calculateWBScale(temp, tint);
+                gl.uniform3f(engine.baseLocs['u_wb_scale'], wbScale[0], wbScale[1], wbScale[2]);
+                
+                gl.drawArrays(gl.TRIANGLES, 0, 6);
+                
+                // Read pixels
+                const pixels = new Float32Array(4);
+                gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, pixels);
+                
+                log(`GPU Output: [${pixels[0].toFixed(5)}, ${pixels[1].toFixed(5)}, ${pixels[2].toFixed(5)}]`);
+                
+                // Calculate error
+                const errR = Math.abs(pixels[0] - cpuOutput[0]);
+                const errG = Math.abs(pixels[1] - cpuOutput[1]);
+                const errB = Math.abs(pixels[2] - cpuOutput[2]);
+                const maxErr = Math.max(errR, errG, errB);
+                
+                log(`Max Error: ${maxErr.toExponential(4)}`);
+                if (maxErr < 1e-4) {
+                    log(`<span style="color: #4f4;">PASS</span>`);
+                } else {
+                    log(`<span style="color: #f44;">FAIL</span>`);
+                }
+            };
+            
+            // Note: GL_FLOAT for readPixels requires an extension in WebGL2!
+            gl.getExtension('EXT_color_buffer_float');
+            // WebGL2 allows readPixels with FLOAT if color buffer is FLOAT
+            
+            runTestCase(0.18, 0.18, 0.18, 0, 0, "Identity Neutral Gray");
+            runTestCase(0.18, 0.18, 0.18, 1, 0, "Warm Neutral Gray");
+            runTestCase(0.18, 0.18, 0.18, -1, 0, "Cool Neutral Gray");
+            runTestCase(1.0, 0.0, 0.0, 0.5, 0.2, "Primary Red WB");
+            runTestCase(0.0, 1.0, 0.0, -0.5, -0.3, "Primary Green WB");
+            runTestCase(0.0, 0.0, 1.0, 1.0, 1.0, "Primary Blue WB Extreme");
+            runTestCase(2.0, 1.0, 0.5, 0.8, -0.5, "HDR Safe WB");
+            
+            log("<br>Done.");
+        }
+        
+        runTests();
+    </script>
+</body>
+</html>
