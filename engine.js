@@ -253,7 +253,7 @@ vec3 encodeSRGB(vec3 linear) {
         uniform sampler2D u_image;
         
         // 3D LUT
-        uniform mediump sampler3D u_lut;
+        uniform highp sampler3D u_lut;
         uniform float u_lut_intensity;
         uniform float u_lut_size;
         
