@@ -511,11 +511,20 @@ vec3 encodeSRGB(vec3 linear) {
         
         gl.bindTexture(gl.TEXTURE_3D, this.lutTexture);
         
-        const internalFormat = gl.RGB16F; 
-        const format = gl.RGB;
+        // Pad RGB to RGBA to avoid WebGL2 3-channel alignment/support issues on some drivers
+        const rgbaData = new Float32Array(this.lutSize * this.lutSize * this.lutSize * 4);
+        for(let i=0, j=0; i < lutData.data.length; i+=3, j+=4) {
+            rgbaData[j]   = lutData.data[i];
+            rgbaData[j+1] = lutData.data[i+1];
+            rgbaData[j+2] = lutData.data[i+2];
+            rgbaData[j+3] = 1.0;
+        }
+        
+        const internalFormat = gl.RGBA16F; 
+        const format = gl.RGBA;
         const type = gl.FLOAT;
         
-        gl.texImage3D(gl.TEXTURE_3D, 0, internalFormat, this.lutSize, this.lutSize, this.lutSize, 0, format, type, lutData.data);
+        gl.texImage3D(gl.TEXTURE_3D, 0, internalFormat, this.lutSize, this.lutSize, this.lutSize, 0, format, type, rgbaData);
         
         const filter = this.caps.textureHalfFloatLinear ? gl.LINEAR : gl.NEAREST;
         gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, filter);
@@ -526,7 +535,7 @@ vec3 encodeSRGB(vec3 linear) {
         
         gl.bindTexture(gl.TEXTURE_3D, null);
         
-        this.render();
+        // No explicit render() needed here because app.js triggers updateStateFromSliders immediately.
     }
 
     resetState() {
@@ -796,7 +805,7 @@ vec3 encodeSRGB(vec3 linear) {
             gl.uniform1i(this.outputLocs['u_image'], 0);
             
             gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_3D, this.lutTexture || this.dummyLutTexture);
+            gl.bindTexture(gl.TEXTURE_3D, this.lutTexture || this.dummyLut);
             gl.uniform1i(this.outputLocs['u_lut'], 1);
             gl.uniform1f(this.outputLocs['u_lut_intensity'], 0.0);
             gl.uniform1f(this.outputLocs['u_lut_size'], this.lutSize || 1.0);
@@ -876,7 +885,7 @@ vec3 encodeSRGB(vec3 linear) {
             gl.uniform1i(this.outputLocs['u_image'], 0);
             
             gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_3D, this.lutTexture || this.dummyLutTexture);
+            gl.bindTexture(gl.TEXTURE_3D, this.lutTexture || this.dummyLut);
             gl.uniform1i(this.outputLocs['u_lut'], 1);
             gl.uniform1f(this.outputLocs['u_lut_intensity'], this.state['u_lut_intensity'] || 0.0);
             gl.uniform1f(this.outputLocs['u_lut_size'], this.lutSize || 1.0);
