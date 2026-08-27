@@ -188,7 +188,7 @@ vec3 encodeSRGB(vec3 linear) {
         // --- ASC CDL (Lift/Gamma/Gain) ---
         color.rgb = color.rgb * u_gain;
         color.rgb = color.rgb + u_lift * max(1.0 - color.rgb, vec3(0.0));
-        color.rgb = pow(max(color.rgb, vec3(0.0)), vec3(1.0) / max(u_gamma, vec3(1e-5)));
+        color.rgb = sign(color.rgb) * pow(abs(color.rgb), vec3(1.0) / max(u_gamma, vec3(1e-5)));
 
         outColor = color;
     }
