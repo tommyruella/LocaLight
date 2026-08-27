@@ -1535,7 +1535,8 @@ function triggerEngineRender() {
             captureCurrentState();
         }
         
-        layers.forEach(layer => {
+        layers.forEach((layer, i) => {
+            layer.active = (i === activeLayerIndex);
             layer.engineState = computeEngineStateForLayer(layer.state);
         });
         

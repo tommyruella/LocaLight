@@ -249,18 +249,36 @@ vec3 encodeSRGB(vec3 linear) {
         const fsOutputSource = `#version 300 es
         precision highp float;
         in vec2 v_texCoord;
+        
         uniform sampler2D u_image;
+        
+        // 3D LUT
+        uniform mediump sampler3D u_lut;
+        uniform float u_lut_intensity;
+        uniform float u_lut_size;
+        
         out vec4 outColor;
         
         ${GLSL_COLOR_SPACE}
 
         void main() {
             vec3 color = texture(u_image, v_texCoord).rgb;
+            
             // Provisional Display Transform
-            color = clamp(color, 0.0, 1.0);
-            // Output Encoding
-            color = encodeSRGB(color);
-            outColor = vec4(color, 1.0);
+            vec3 c = max(vec3(0.0), color);
+            c = clamp(c, 0.0, 1.0);
+            
+            // Output Encoding (Linear -> sRGB)
+            vec3 encoded = encodeSRGB(c);
+            
+            // --- 3D LUT in Display-Referred Space ---
+            // Scale coords to sample voxel centers and avoid edge bleeding
+            vec3 lutCoord = (encoded * (u_lut_size - 1.0) + 0.5) / u_lut_size;
+            vec3 lutColor = texture(u_lut, lutCoord).rgb;
+            
+            encoded = mix(encoded, lutColor, u_lut_intensity);
+            
+            outColor = vec4(encoded, 1.0);
         }`;
 
         const vertexShader = this.compileShader(gl.VERTEX_SHADER, vsSource);
@@ -288,6 +306,12 @@ vec3 encodeSRGB(vec3 linear) {
         this.outputLocs = {};
         gl.useProgram(this.outputProgram);
         this.outputLocs['u_image'] = gl.getUniformLocation(this.outputProgram, 'u_image');
+        this.outputLocs['u_lut'] = gl.getUniformLocation(this.outputProgram, 'u_lut');
+        this.outputLocs['u_lut_intensity'] = gl.getUniformLocation(this.outputProgram, 'u_lut_intensity');
+        this.outputLocs['u_lut_size'] = gl.getUniformLocation(this.outputProgram, 'u_lut_size');
+        this.outputLocs['u_lut'] = gl.getUniformLocation(this.outputProgram, 'u_lut');
+        this.outputLocs['u_lut_intensity'] = gl.getUniformLocation(this.outputProgram, 'u_lut_intensity');
+        this.outputLocs['u_lut_size'] = gl.getUniformLocation(this.outputProgram, 'u_lut_size');
 
         // Uniforms for Base Pass
         this.baseLocs = {};
@@ -478,7 +502,31 @@ vec3 encodeSRGB(vec3 linear) {
     }
 
     loadLUT(lutData) {
-        // Disabled for M3
+        const gl = this.gl;
+        if (this.lutTexture) {
+            gl.deleteTexture(this.lutTexture);
+        }
+        this.lutTexture = gl.createTexture();
+        this.lutSize = lutData.size;
+        
+        gl.bindTexture(gl.TEXTURE_3D, this.lutTexture);
+        
+        const internalFormat = gl.RGB16F; 
+        const format = gl.RGB;
+        const type = gl.FLOAT;
+        
+        gl.texImage3D(gl.TEXTURE_3D, 0, internalFormat, this.lutSize, this.lutSize, this.lutSize, 0, format, type, lutData.data);
+        
+        const filter = this.caps.textureHalfFloatLinear ? gl.LINEAR : gl.NEAREST;
+        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+        
+        gl.bindTexture(gl.TEXTURE_3D, null);
+        
+        this.render();
     }
 
     resetState() {
@@ -746,6 +794,13 @@ vec3 encodeSRGB(vec3 linear) {
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, this.compATexture);
             gl.uniform1i(this.outputLocs['u_image'], 0);
+            
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_3D, this.lutTexture || this.dummyLutTexture);
+            gl.uniform1i(this.outputLocs['u_lut'], 1);
+            gl.uniform1f(this.outputLocs['u_lut_intensity'], 0.0);
+            gl.uniform1f(this.outputLocs['u_lut_size'], this.lutSize || 1.0);
+            
             gl.drawArrays(gl.TRIANGLES, 0, 6);
             return;
         }
@@ -819,6 +874,12 @@ vec3 encodeSRGB(vec3 linear) {
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, currentCompTex);
             gl.uniform1i(this.outputLocs['u_image'], 0);
+            
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_3D, this.lutTexture || this.dummyLutTexture);
+            gl.uniform1i(this.outputLocs['u_lut'], 1);
+            gl.uniform1f(this.outputLocs['u_lut_intensity'], this.state['u_lut_intensity'] || 0.0);
+            gl.uniform1f(this.outputLocs['u_lut_size'], this.lutSize || 1.0);
             
             gl.drawArrays(gl.TRIANGLES, 0, 6);
         }
