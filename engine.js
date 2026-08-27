@@ -121,6 +121,12 @@ vec3 whiteBalance(vec3 color, vec3 wb_scale) {
     uniform float u_spline_x[5];
     uniform float u_spline_y[5];
     uniform float u_spline_m[5];
+    
+    uniform vec3 u_lift;
+    uniform vec3 u_gamma;
+    uniform vec3 u_gain;
+    uniform float u_saturation;
+    uniform float u_vibrance;
 
     float evalSpline(float x_val) {
         if (x_val <= u_spline_x[0]) {
@@ -164,9 +170,10 @@ vec3 whiteBalance(vec3 color, vec3 wb_scale) {
             0.491345, 0.961534, 0.087642,
             0.027358, 0.023184, 0.980508
         );
+        // Correct Inverse of M_SRGB_TO_LMS
         const mat3 M_LMS_TO_SRGB = mat3(
-            2.538045, -0.147259, 0.003366,
-            -1.293277, 1.115729, -0.098418,
+            2.538047, -0.146005, -0.042299,
+            -1.293278, 1.116649, -0.071607,
             -0.040237, -0.022329, 1.022753
         );
         vec3 lms = M_SRGB_TO_LMS * color.rgb;
@@ -188,6 +195,20 @@ vec3 whiteBalance(vec3 color, vec3 wb_scale) {
         // Reapply Luma (color preserving)
         float scale = l_out / safe_l_in;
         color.rgb *= scale;
+        
+        // --- Saturation & Vibrance ---
+        float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+        color.rgb = mix(vec3(luma), color.rgb, 1.0 + u_saturation);
+        
+        float maxC = max(color.r, max(color.g, color.b));
+        float currentSat = maxC > 1e-5 ? (maxC - luma) / maxC : 0.0;
+        float vibAmount = u_vibrance * (1.0 - clamp(currentSat, 0.0, 1.0));
+        color.rgb = mix(vec3(luma), color.rgb, 1.0 + vibAmount);
+        
+        // --- ASC CDL (Lift/Gamma/Gain) ---
+        color.rgb = color.rgb * u_gain;
+        color.rgb = color.rgb + u_lift * (1.0 - color.rgb);
+        color.rgb = pow(max(color.rgb, vec3(0.0)), vec3(1.0) / max(u_gamma, vec3(1e-5)));
 
         outColor = color;
     }
@@ -299,6 +320,11 @@ vec3 whiteBalance(vec3 color, vec3 wb_scale) {
         this.baseLocs['u_spline_x'] = gl.getUniformLocation(this.baseProgram, 'u_spline_x');
         this.baseLocs['u_spline_y'] = gl.getUniformLocation(this.baseProgram, 'u_spline_y');
         this.baseLocs['u_spline_m'] = gl.getUniformLocation(this.baseProgram, 'u_spline_m');
+        this.baseLocs['u_lift'] = gl.getUniformLocation(this.baseProgram, 'u_lift');
+        this.baseLocs['u_gamma'] = gl.getUniformLocation(this.baseProgram, 'u_gamma');
+        this.baseLocs['u_gain'] = gl.getUniformLocation(this.baseProgram, 'u_gain');
+        this.baseLocs['u_saturation'] = gl.getUniformLocation(this.baseProgram, 'u_saturation');
+        this.baseLocs['u_vibrance'] = gl.getUniformLocation(this.baseProgram, 'u_vibrance');
 
 
         // Uniforms for Blur Pass
@@ -684,6 +710,19 @@ vec3 whiteBalance(vec3 color, vec3 wb_scale) {
         gl.uniform1fv(this.baseLocs['u_spline_x'], spline.x);
         gl.uniform1fv(this.baseLocs['u_spline_y'], spline.y);
         gl.uniform1fv(this.baseLocs['u_spline_m'], spline.m);
+        
+        const satVal = this.bypassed ? 0.0 : (state['u_saturation'] !== undefined ? state['u_saturation'] : (this.state['u_saturation'] || 0.0));
+        const vibVal = this.bypassed ? 0.0 : (state['u_vibrance'] !== undefined ? state['u_vibrance'] : (this.state['u_vibrance'] || 0.0));
+        gl.uniform1f(this.baseLocs['u_saturation'], satVal);
+        gl.uniform1f(this.baseLocs['u_vibrance'], vibVal);
+        
+        const liftVal = this.bypassed ? [0,0,0] : (state['u_lift'] !== undefined ? state['u_lift'] : (this.state['u_lift'] || [0,0,0]));
+        const gammaVal = this.bypassed ? [1,1,1] : (state['u_gamma'] !== undefined ? state['u_gamma'] : (this.state['u_gamma'] || [1,1,1]));
+        const gainVal = this.bypassed ? [1,1,1] : (state['u_gain'] !== undefined ? state['u_gain'] : (this.state['u_gain'] || [1,1,1]));
+        
+        gl.uniform3fv(this.baseLocs['u_lift'], liftVal);
+        gl.uniform3fv(this.baseLocs['u_gamma'], gammaVal);
+        gl.uniform3fv(this.baseLocs['u_gain'], gainVal);
         
         gl.drawArrays(gl.TRIANGLES, 0, 6);
 

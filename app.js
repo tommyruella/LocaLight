@@ -1458,14 +1458,9 @@ function computeEngineStateForLayer(layerState) {
     // Semantic mapping for sliders
     s['u_exposure'] = (layerState.sliders['u_exposure'] || 0) / 20.0; // UI [-100, 100] -> [-5 EV, +5 EV]
     
-    // Other sliders temporary mapping
     // Other sliders mapped to semantic ranges [-1.0, 1.0]
-    ['u_contrast', 'u_highlights', 'u_shadows', 'u_whites', 'u_blacks', 'u_temperature', 'u_tint'].forEach(name => {
+    ['u_contrast', 'u_highlights', 'u_shadows', 'u_whites', 'u_blacks', 'u_temperature', 'u_tint', 'u_saturation', 'u_vibrance'].forEach(name => {
         s[name] = (layerState.sliders[name] || 0) / 100.0;
-    });
-    // Disabled/not-yet-refactored sliders mapped to 0 or unused
-    ['u_brightness', 'u_cinematic_contrast', 'u_saturation', 'u_cinematic_saturation', 'u_vibrance', 'u_shadow_toe', 'u_highlight_shoulder'].forEach(name => {
-        s[name] = 0.0; 
     });
     
     s['u_sharpness'] = (layerState.sliders['u_sharpness'] || 0) / 100.0;
