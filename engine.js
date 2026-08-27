@@ -887,7 +887,14 @@ vec3 encodeSRGB(vec3 linear) {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_3D, this.lutTexture || this.dummyLut);
             gl.uniform1i(this.outputLocs['u_lut'], 1);
-            gl.uniform1f(this.outputLocs['u_lut_intensity'], this.state['u_lut_intensity'] || 0.0);
+                        let globalIntensity = 0.0;
+            if (layersArray && layersArray.length > 0) {
+                const active = layersArray.find(l => l.active) || layersArray[0];
+                if (active.engineState && active.engineState['u_lut_intensity'] !== undefined) {
+                    globalIntensity = active.engineState['u_lut_intensity'];
+                }
+            }
+            gl.uniform1f(this.outputLocs['u_lut_intensity'], globalIntensity);
             gl.uniform1f(this.outputLocs['u_lut_size'], this.lutSize || 1.0);
             
             gl.drawArrays(gl.TRIANGLES, 0, 6);
