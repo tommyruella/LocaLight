@@ -1429,6 +1429,7 @@ function captureCurrentState() {
     }
 
     return {
+        pipelineVersion: 2,
         layers: JSON.parse(JSON.stringify(layers)),
         activeLayerIndex: activeLayerIndex
     };
@@ -1566,6 +1567,7 @@ function applyHistoryState(state) {
     } else {
         layers = JSON.parse(JSON.stringify(state.layers));
         activeLayerIndex = state.activeLayerIndex;
+    engine.pipelineVersion = state.pipelineVersion || 1;
     }
     
     if (typeof renderLayersList === 'function') renderLayersList();

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+    import { LocalLightEngine } from './engine.js';
+    try {
+        const canvas = document.getElementById('c');
+        const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
+        const engine = new LocalLightEngine(canvas, gl);
+        
+        // Create red image
+        const c1 = document.createElement('canvas');
+        c1.width = 100; c1.height = 100;
+        const ctx1 = c1.getContext('2d');
+        ctx1.fillStyle = 'red'; ctx1.fillRect(0,0,100,100);
+        
+        // Create blue image
+        const c2 = document.createElement('canvas');
+        c2.width = 100; c2.height = 100;
+        const ctx2 = c2.getContext('2d');
+        ctx2.fillStyle = 'blue'; ctx2.fillRect(0,0,100,100);
+        
+        window.runTest = function() {
+            let results = [];
+            engine.loadImage(c1);
+            let p1 = new Uint8Array(4);
+            gl.readPixels(50, 50, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, p1);
+            results.push(p1[0] > 200 && p1[2] < 50); // Red
+            
+            engine.loadImage(c2);
+            let p2 = new Uint8Array(4);
+            gl.readPixels(50, 50, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, p2);
+            results.push(p2[0] < 50 && p2[2] > 200); // Blue
+            
+            return results;
+        };
+    } catch(e) {
+        console.error("TEST ERROR:", e);
+        window.runTest = function() { return [false, false]; };
+    }
+</script>
+</body>
+</html>

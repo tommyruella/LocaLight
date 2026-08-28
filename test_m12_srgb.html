@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>M12 Color Space Test</title>
+</head>
+<body>
+    <canvas id="canvas" width="4" height="4"></canvas>
+    <script type="module">
+        import { LocalLightEngine } from './engine.js';
+        (async () => {
+            const canvas = document.getElementById('canvas');
+            const engine = new LocalLightEngine(canvas);
+            
+            if (engine.pipelineFloatPrecision !== 16) {
+                console.error("FAIL: Expected 16-bit float pipeline");
+                document.body.innerHTML += "FAIL: Float16<br>";
+                return;
+            }
+            
+            document.body.innerHTML += "PASS: Float16 Capability Confirmed<br>";
+        })();
+    </script>
+</body>
+</html>

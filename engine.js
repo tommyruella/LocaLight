@@ -12,6 +12,10 @@ export class LocalLightEngine {
         this.baseFbo = null;
         this.blurTexture = null;
         this.blurFbo = null;
+        this.haloExtTexture = null;
+        this.haloExtFbo = null;
+        this.haloBlurTexture = null;
+        this.haloBlurFbo = null;
         this.lutTexture = null;
         
         this.uniformLocations = {};
@@ -66,7 +70,9 @@ export class LocalLightEngine {
             colorBufferFloat: gl.getExtension('EXT_color_buffer_float'),
             textureHalfFloatLinear: gl.getExtension('OES_texture_half_float_linear') || gl.getExtension('OES_texture_float_linear'),
         };
-        console.log("[LocalLightEngine] Capabilities:", this.caps);
+        
+        this.pipelineFloatPrecision = this.caps.colorBufferFloat ? 16 : 8;
+console.log("[LocalLightEngine] Capabilities:", this.caps);
     }
 
     initShaders() {
@@ -104,8 +110,10 @@ vec3 encodeSRGB(vec3 linear) {
 
         const fsBaseSource = `#version 300 es
     precision highp float;
+    ${GLSL_COLOR_SPACE}
     in vec2 v_texCoord;
     uniform sampler2D u_image;
+        uniform int u_pipelineVersion;
     out vec4 outColor;
     
     uniform float u_exposure;
@@ -171,6 +179,34 @@ vec3 encodeSRGB(vec3 linear) {
         }
     }
 
+    
+    float getHue(vec3 c) {
+        float cMax = max(c.r, max(c.g, c.b));
+        float cMin = min(c.r, min(c.g, c.b));
+        float delta = cMax - cMin;
+        if (delta == 0.0) return 0.0;
+        float h = 0.0;
+        if (cMax == c.r) {
+            h = (c.g - c.b) / delta + (c.g < c.b ? 6.0 : 0.0);
+        } else if (cMax == c.g) {
+            h = (c.b - c.r) / delta + 2.0;
+        } else {
+            h = (c.r - c.g) / delta + 4.0;
+        }
+        return h / 6.0;
+    }
+
+    mat3 axisRotation(vec3 axis, float angle) {
+        float s = sin(angle);
+        float c = cos(angle);
+        float oc = 1.0 - c;
+        return mat3(
+            oc * axis.x * axis.x + c,           oc * axis.x * axis.y - axis.z * s,  oc * axis.z * axis.x + axis.y * s,
+            oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,
+            oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c
+        );
+    }
+
     float evalSpline(float x_val) {
         if (x_val <= u_spline_x[0]) {
             return u_spline_y[0] + u_spline_m[0] * (x_val - u_spline_x[0]);
@@ -201,11 +237,7 @@ vec3 encodeSRGB(vec3 linear) {
         vec4 color = texture(u_image, vec2(v_texCoord.x, 1.0 - v_texCoord.y));
         
         if (u_is_srgb_input == 1) {
-            vec3 srgb = color.rgb;
-            bvec3 cutoff = lessThanEqual(srgb, vec3(0.04045));
-            vec3 higher = pow((srgb + vec3(0.055)) / vec3(1.055), vec3(2.4));
-            vec3 lower = srgb / vec3(12.92);
-            color.rgb = mix(higher, lower, cutoff);
+            color.rgb = linearizeSRGB(color.rgb);
         }
 
                 const mat3 M_SRGB_TO_LMS = mat3(
@@ -239,9 +271,8 @@ vec3 encodeSRGB(vec3 linear) {
         float scale = l_out / safe_l_in;
         color.rgb *= scale;
         
-        // --- 8-Band Color Mix (HSL) ---
-        vec3 hsl = rgb2hsl(color.rgb);
-        float h = hsl.x; // [0, 1]
+        // --- 8-Band Color Mix (Scene Linear) ---
+        float h = getHue(color.rgb);
         
         float centers[8];
         centers[0] = 0.0;         // Red
@@ -263,20 +294,20 @@ vec3 encodeSRGB(vec3 linear) {
             }
         }
         
-        float d1, range;
+        float d1, range_h;
         if (idx1 == 7) {
-            range = 1.0 - centers[7];
+            range_h = 1.0 - centers[7];
             if (h >= centers[7]) {
                 d1 = h - centers[7];
             } else {
                 d1 = h + (1.0 - centers[7]);
             }
         } else {
-            range = centers[idx2] - centers[idx1];
+            range_h = centers[idx2] - centers[idx1];
             d1 = h - centers[idx1];
         }
         
-        float t = d1 / range;
+        float t = d1 / range_h;
         t = smoothstep(0.0, 1.0, t);
         
         float w1 = 1.0 - t;
@@ -286,11 +317,22 @@ vec3 encodeSRGB(vec3 linear) {
         float shift_s = w1 * u_hsl_shifts[idx1*3+1] + w2 * u_hsl_shifts[idx2*3+1];
         float shift_l = w1 * u_hsl_shifts[idx1*3+2] + w2 * u_hsl_shifts[idx2*3+2];
         
-        hsl.x = fract(hsl.x + shift_h * 0.125 + 1.0);
-        hsl.y = clamp(hsl.y + shift_s, 0.0, 1.0);
-        hsl.z = clamp(hsl.z + shift_l, 0.0, 1.0);
-        
-        color.rgb = hsl2rgb(hsl);
+        // Apply shifts in RGB
+        // 1. Hue Rotation
+        if (shift_h != 0.0) {
+            mat3 rot = axisRotation(normalize(vec3(1.0, 1.0, 1.0)), shift_h * 3.14159);
+            color.rgb = rot * color.rgb;
+        }
+        // 2. Saturation
+        if (shift_s != 0.0) {
+            float curLuma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+            color.rgb = mix(vec3(curLuma), color.rgb, max(1.0 + shift_s, 0.0));
+        }
+        // 3. Lightness
+        if (shift_l != 0.0) {
+            color.rgb *= exp2(shift_l);
+        }
+
         
         // --- Saturation & Vibrance ---
         float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
@@ -310,10 +352,27 @@ vec3 encodeSRGB(vec3 linear) {
     }
 `;
 
+        
+        const fsHaloExtSource = `#version 300 es
+        precision highp float;
+        in vec2 v_texCoord;
+        uniform sampler2D u_image;
+        uniform int u_pipelineVersion;
+        out vec4 outColor;
+        
+        void main() {
+            vec4 color = texture(u_image, v_texCoord);
+            float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+            float threshold = 0.8;
+            float mask = max(luma - threshold, 0.0);
+            outColor = vec4(color.rgb * mask, 1.0);
+        }`;
+
         const fsBlurSource = `#version 300 es
         precision mediump float;
         in vec2 v_texCoord;
         uniform sampler2D u_image;
+        uniform int u_pipelineVersion;
         uniform vec2 u_texelSize;
         uniform float u_spatialScale;
         out vec4 outColor;
@@ -342,6 +401,7 @@ vec3 encodeSRGB(vec3 linear) {
         in vec2 v_texCoord;
         uniform sampler2D u_baseImage;
         uniform sampler2D u_blurImage;
+        uniform sampler2D u_haloBlurImage;
         uniform vec2 u_texelSize;
         uniform float u_spatialScale;
         
@@ -376,8 +436,8 @@ vec3 encodeSRGB(vec3 linear) {
             }
             
             if (u_halation > 0.0) {
-                vec3 bloom = max(blur.rgb - 0.6, 0.0);
-                base.rgb += u_halation * bloom * 2.0;
+                vec3 halo = texture(u_haloBlurImage, v_texCoord).rgb;
+                base.rgb += u_halation * halo * 2.0;
             }
             
             if (u_glow > 0.0) {
@@ -418,14 +478,10 @@ vec3 encodeSRGB(vec3 linear) {
                 blended = layer;
             } else if (u_blendMode == 1) { // Multiply
                 blended = base * layer;
-            } else if (u_blendMode == 2) { // Screen
-                blended = 1.0 - (1.0 - base) * (1.0 - layer);
-            } else if (u_blendMode == 3) { // Overlay
-                blended = vec3(
-                    base.r < 0.5 ? (2.0 * base.r * layer.r) : (1.0 - 2.0 * (1.0 - base.r) * (1.0 - layer.r)),
-                    base.g < 0.5 ? (2.0 * base.g * layer.g) : (1.0 - 2.0 * (1.0 - base.g) * (1.0 - layer.g)),
-                    base.b < 0.5 ? (2.0 * base.b * layer.b) : (1.0 - 2.0 * (1.0 - base.b) * (1.0 - layer.b))
-                );
+            } else if (u_blendMode == 2) { // Screen (Linear Additive)
+                blended = base + layer;
+            } else if (u_blendMode == 3) { // Overlay (Linear HDR)
+                blended = base * (base + layer) / (base + 0.18);
             }
             
             outColor = vec4(mix(base, blended, u_opacity), 1.0);
@@ -436,6 +492,7 @@ vec3 encodeSRGB(vec3 linear) {
         in vec2 v_texCoord;
         
         uniform sampler2D u_image;
+        uniform int u_pipelineVersion;
         
         // 3D LUT
         uniform highp sampler3D u_lut;
@@ -446,12 +503,32 @@ vec3 encodeSRGB(vec3 linear) {
         
         ${GLSL_COLOR_SPACE}
 
+        vec3 PBRNeutralToneMapping(vec3 color) {
+            const float startCompression = 0.8 - 0.04;
+            const float desaturation = 0.15;
+            vec3 c = max(color, vec3(0.0));
+            float x = min(c.r, min(c.g, c.b));
+            float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+            c -= offset;
+            float peak = max(c.r, max(c.g, c.b));
+            if (peak < startCompression) return c;
+            const float d = 1.0 - startCompression;
+            float newPeak = 1.0 - d * d / (peak + d - startCompression);
+            c *= newPeak / peak;
+            float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+            return mix(c, newPeak * vec3(1, 1, 1), g);
+        }
+
         void main() {
             vec3 color = texture(u_image, v_texCoord).rgb;
             
-            // Provisional Display Transform
-            vec3 c = max(vec3(0.0), color);
-            c = clamp(c, 0.0, 1.0);
+            // Khronos PBR Neutral Tone Mapper (M12)
+            vec3 c = color;
+            if (u_pipelineVersion == 1) {
+                c = clamp(c, 0.0, 1.0);
+            } else {
+                c = PBRNeutralToneMapping(c);
+            }
             
             // Output Encoding (Linear -> sRGB)
             vec3 encoded = encodeSRGB(c);
@@ -468,12 +545,14 @@ vec3 encodeSRGB(vec3 linear) {
 
         const vertexShader = this.compileShader(gl.VERTEX_SHADER, vsSource);
         const baseShader = this.compileShader(gl.FRAGMENT_SHADER, fsBaseSource);
+        const haloExtShader = this.compileShader(gl.FRAGMENT_SHADER, fsHaloExtSource);
         const blurShader = this.compileShader(gl.FRAGMENT_SHADER, fsBlurSource);
         const compositeShader = this.compileShader(gl.FRAGMENT_SHADER, fsCompositeSource);
         const blendShader = this.compileShader(gl.FRAGMENT_SHADER, fsBlendSource);
         const outputShader = this.compileShader(gl.FRAGMENT_SHADER, fsOutputSource);
 
         this.baseProgram = this.createProgram(vertexShader, baseShader);
+        this.haloExtProgram = this.createProgram(vertexShader, haloExtShader);
         this.blurProgram = this.createProgram(vertexShader, blurShader);
         this.compositeProgram = this.createProgram(vertexShader, compositeShader);
         this.blendProgram = this.createProgram(vertexShader, blendShader);
@@ -491,6 +570,7 @@ vec3 encodeSRGB(vec3 linear) {
         this.outputLocs = {};
         gl.useProgram(this.outputProgram);
         this.outputLocs['u_image'] = gl.getUniformLocation(this.outputProgram, 'u_image');
+        this.outputLocs['u_pipelineVersion'] = gl.getUniformLocation(this.outputProgram, 'u_pipelineVersion');
         this.outputLocs['u_lut'] = gl.getUniformLocation(this.outputProgram, 'u_lut');
         this.outputLocs['u_lut_intensity'] = gl.getUniformLocation(this.outputProgram, 'u_lut_intensity');
         this.outputLocs['u_lut_size'] = gl.getUniformLocation(this.outputProgram, 'u_lut_size');
@@ -523,12 +603,18 @@ vec3 encodeSRGB(vec3 linear) {
         this.blurLocs['u_image'] = gl.getUniformLocation(this.blurProgram, 'u_image');
         this.blurLocs['u_texelSize'] = gl.getUniformLocation(this.blurProgram, 'u_texelSize');
         this.blurLocs['u_spatialScale'] = gl.getUniformLocation(this.blurProgram, 'u_spatialScale');
+        
+        this.haloExtLocs = {};
+        gl.useProgram(this.haloExtProgram);
+        this.haloExtLocs['u_image'] = gl.getUniformLocation(this.haloExtProgram, 'u_image');
+
 
         // Uniforms for Composite Pass
         this.compLocs = {};
         gl.useProgram(this.compositeProgram);
         this.compLocs['u_baseImage'] = gl.getUniformLocation(this.compositeProgram, 'u_baseImage');
         this.compLocs['u_blurImage'] = gl.getUniformLocation(this.compositeProgram, 'u_blurImage');
+        this.compLocs['u_haloBlurImage'] = gl.getUniformLocation(this.compositeProgram, 'u_haloBlurImage');
         this.compLocs['u_texelSize'] = gl.getUniformLocation(this.compositeProgram, 'u_texelSize');
         this.compLocs['u_spatialScale'] = gl.getUniformLocation(this.compositeProgram, 'u_spatialScale');
         this.compLocs['u_sharpness'] = gl.getUniformLocation(this.compositeProgram, 'u_sharpness');
@@ -666,6 +752,18 @@ vec3 encodeSRGB(vec3 linear) {
         const blur = this.createFboAndTexture(blurW, blurH, true);
         this.blurTexture = blur.tex;
         this.blurFbo = blur.fbo;
+        
+        if (this.haloExtTexture) gl.deleteTexture(this.haloExtTexture);
+        if (this.haloExtFbo) gl.deleteFramebuffer(this.haloExtFbo);
+        const hext = this.createFboAndTexture(blurW, blurH, true);
+        this.haloExtTexture = hext.tex;
+        this.haloExtFbo = hext.fbo;
+        
+        if (this.haloBlurTexture) gl.deleteTexture(this.haloBlurTexture);
+        if (this.haloBlurFbo) gl.deleteFramebuffer(this.haloBlurFbo);
+        const hblur = this.createFboAndTexture(blurW, blurH, true);
+        this.haloBlurTexture = hblur.tex;
+        this.haloBlurFbo = hblur.fbo;
 
         if (this.layerTexture) gl.deleteTexture(this.layerTexture);
         if (this.layerFbo) gl.deleteFramebuffer(this.layerFbo);
@@ -1104,7 +1202,30 @@ vec3 encodeSRGB(vec3 linear) {
         gl.uniform1f(this.blurLocs['u_spatialScale'], spatialScale);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
 
+        // PASS 2b: Halation Extractor
+        gl.useProgram(this.haloExtProgram);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.haloExtFbo); this.checkFBO();
+        gl.viewport(0, 0, this.blurW, this.blurH);
+        this.bindQuad(this.haloExtProgram);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.baseTexture);
+        gl.uniform1i(this.haloExtLocs['u_image'], 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        
+        // PASS 2c: Halation Blur
+        gl.useProgram(this.blurProgram);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.haloBlurFbo); this.checkFBO();
+        gl.viewport(0, 0, this.blurW, this.blurH);
+        this.bindQuad(this.blurProgram);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.haloExtTexture);
+        gl.uniform1i(this.blurLocs['u_image'], 0);
+        gl.uniform2f(this.blurLocs['u_texelSize'], 1.0 / this.blurW, 1.0 / this.blurH);
+        gl.uniform1f(this.blurLocs['u_spatialScale'], spatialScale * 2.0); // Halation is usually a broader blur
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+
         // PASS 3: Composite (M10 Effects)
+
         gl.useProgram(this.compositeProgram);
         gl.bindFramebuffer(gl.FRAMEBUFFER, targetFbo);
         gl.viewport(0, 0, targetW, targetH);
@@ -1117,6 +1238,9 @@ vec3 encodeSRGB(vec3 linear) {
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, this.blurTexture);
         gl.uniform1i(this.compLocs['u_blurImage'], 1);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, this.haloBlurTexture);
+        gl.uniform1i(this.compLocs['u_haloBlurImage'], 2);
         
         gl.uniform2f(this.compLocs['u_texelSize'], 1.0 / targetW, 1.0 / targetH);
         gl.uniform1f(this.compLocs['u_spatialScale'], spatialScale);
@@ -1166,6 +1290,8 @@ vec3 encodeSRGB(vec3 linear) {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_3D, this.lutTexture || this.dummyLut);
             gl.uniform1i(this.outputLocs['u_lut'], 1);
+            const pipelineVersion = this.pipelineVersion || 2;
+            gl.uniform1i(this.outputLocs['u_pipelineVersion'], pipelineVersion);
             gl.uniform1f(this.outputLocs['u_lut_intensity'], 0.0);
             gl.uniform1f(this.outputLocs['u_lut_size'], this.lutSize || 1.0);
             
@@ -1246,6 +1372,8 @@ vec3 encodeSRGB(vec3 linear) {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_3D, this.lutTexture || this.dummyLut);
             gl.uniform1i(this.outputLocs['u_lut'], 1);
+            const pipelineVersion = this.pipelineVersion || 2;
+            gl.uniform1i(this.outputLocs['u_pipelineVersion'], pipelineVersion);
                         let globalIntensity = 0.0;
             if (layersArray && layersArray.length > 0) {
                 const active = layersArray.find(l => l.active) || layersArray[0];

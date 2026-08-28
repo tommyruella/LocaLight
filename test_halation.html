@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head><title>M10 Halation Profiling</title></head>
+<body>
+<canvas id="canvas" width="64" height="64"></canvas>
+<script type="module">
+import { LocalLightEngine } from './engine.js';
+
+window.runTest = async function() {
+    const canvas = document.getElementById('canvas');
+    const engine = new LocalLightEngine(canvas);
+    const gl = engine.gl;
+    if (!gl) return "No WebGL";
+
+    function renderAndRead(stateUpdates) {
+        Object.assign(engine.state, { u_sharpness: 0, u_clarity: 0, u_halation: 0, u_grain: 0, u_noise: 0, u_glow: 0 });
+        Object.assign(engine.state, stateUpdates);
+        engine.render([]);
+        const pixels = new Uint8Array(64 * 64 * 4);
+        gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return pixels;
+    }
+
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = 64; srcCanvas.height = 64;
+    const ctx = srcCanvas.getContext('2d');
+    
+    // Gray background (linear ~0.57)
+    ctx.fillStyle = 'rgb(200,200,200)';
+    ctx.fillRect(0, 0, 64, 64);
+    // White square 4x4
+    ctx.fillStyle = 'rgb(255,255,255)';
+    ctx.fillRect(30, 30, 4, 4);
+    engine.loadImage(srcCanvas);
+    
+    let base = renderAndRead({});
+    let hal = renderAndRead({u_halation: 1.0});
+    
+    let log = [];
+    // Measure outside the square: X=29, 28, 27, 26
+    for(let x = 29; x >= 26; x--) {
+        let idx = (31 * 64 + x) * 4;
+        log.push(`Dist ${30-x}: base=${base[idx]}, hal=${hal[idx]}`);
+    }
+
+    return JSON.stringify(log, null, 2);
+}
+</script>
+</body>
+</html>

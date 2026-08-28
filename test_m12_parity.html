@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head><title>M12 Parity Test</title></head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import { LocalLightEngine } from './engine.js';
+
+window.runTest = async function() {
+    const canvas = document.getElementById('c');
+    canvas.width = 4;
+    canvas.height = 4;
+    const gl = canvas.getContext('webgl2');
+    const engine = new LocalLightEngine(canvas);
+    
+    // Create an HDR texture (pixels > 1.0)
+    const hdrPixels = new Float32Array(4 * 4 * 4);
+    for (let i = 0; i < hdrPixels.length; i+=4) {
+        hdrPixels[i] = 1.5; // R
+        hdrPixels[i+1] = 1.5; // G
+        hdrPixels[i+2] = 1.5; // B
+        hdrPixels[i+3] = 1.0; // A
+    }
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, 4, 0, gl.RGBA, gl.FLOAT, hdrPixels);
+    engine.originalTexture = tex;
+    engine.ingestW = 4; engine.ingestH = 4;
+    
+    // Test V1 (Hard Clip)
+    engine.pipelineVersion = 1;
+    engine.render([{ active: true, visible: true, state: { sliders: {} }, engineState: { u_exposure: 0 } }]);
+    let pixelsV1 = new Uint8Array(4 * 4 * 4);
+    gl.readPixels(0, 0, 4, 4, gl.RGBA, gl.UNSIGNED_BYTE, pixelsV1);
+    
+    // Test V2 (Tone Mapped)
+    engine.pipelineVersion = 2;
+    engine.render([{ active: true, visible: true, state: { sliders: {} }, engineState: { u_exposure: 0 } }]);
+    let pixelsV2 = new Uint8Array(4 * 4 * 4);
+    gl.readPixels(0, 0, 4, 4, gl.RGBA, gl.UNSIGNED_BYTE, pixelsV2);
+    
+    return { v1_R: pixelsV1[0], v2_R: pixelsV2[0] };
+}
+</script>
+</body>
+</html>

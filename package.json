@@ -1,0 +1,24 @@
+{
+  "name": "localight",
+  "version": "1.0.0",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tommyruella/LocaLight.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tommyruella/LocaLight/issues"
+  },
+  "homepage": "https://github.com/tommyruella/LocaLight#readme",
+  "description": "",
+  "dependencies": {
+    "playwright": "^1.62.1",
+    "puppeteer": "^25.9.0"
+  }
+}
