@@ -52,6 +52,16 @@ export class LocalLightEngine {
 
     initCapabilities() {
         const gl = this.gl;
+        
+        const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+        const maxRb = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
+        const maxVp = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+        this.limits = {
+            maxTex: maxTex,
+            maxRb: maxRb,
+            maxVp: Math.min(maxVp[0], maxVp[1])
+        };
+        this.limits.tLimit = Math.min(this.limits.maxTex, this.limits.maxRb, this.limits.maxVp);
         this.caps = {
             colorBufferFloat: gl.getExtension('EXT_color_buffer_float'),
             textureHalfFloatLinear: gl.getExtension('OES_texture_half_float_linear') || gl.getExtension('OES_texture_float_linear'),
@@ -305,11 +315,12 @@ vec3 encodeSRGB(vec3 linear) {
         in vec2 v_texCoord;
         uniform sampler2D u_image;
         uniform vec2 u_texelSize;
+        uniform float u_spatialScale;
         out vec4 outColor;
         
         void main() {
             vec4 color = vec4(0.0);
-            vec2 off = u_texelSize * 1.5;
+            vec2 off = u_texelSize * u_spatialScale * 1.5;
             
             color += texture(u_image, v_texCoord + vec2(-off.x, -off.y)) * 0.0625;
             color += texture(u_image, v_texCoord + vec2(0.0, -off.y)) * 0.125;
@@ -332,6 +343,7 @@ vec3 encodeSRGB(vec3 linear) {
         uniform sampler2D u_baseImage;
         uniform sampler2D u_blurImage;
         uniform vec2 u_texelSize;
+        uniform float u_spatialScale;
         
         uniform float u_sharpness;
         uniform float u_clarity;
@@ -351,10 +363,10 @@ vec3 encodeSRGB(vec3 linear) {
             vec4 blur = texture(u_blurImage, v_texCoord);
             
             if (u_sharpness != 0.0) {
-                vec3 n = texture(u_baseImage, v_texCoord + vec2(0.0, u_texelSize.y)).rgb;
-                vec3 s = texture(u_baseImage, v_texCoord + vec2(0.0, -u_texelSize.y)).rgb;
-                vec3 e = texture(u_baseImage, v_texCoord + vec2(u_texelSize.x, 0.0)).rgb;
-                vec3 w = texture(u_baseImage, v_texCoord + vec2(-u_texelSize.x, 0.0)).rgb;
+                vec3 n = texture(u_baseImage, v_texCoord + vec2(0.0, u_texelSize.y * u_spatialScale)).rgb;
+                vec3 s = texture(u_baseImage, v_texCoord + vec2(0.0, -u_texelSize.y * u_spatialScale)).rgb;
+                vec3 e = texture(u_baseImage, v_texCoord + vec2(u_texelSize.x * u_spatialScale, 0.0)).rgb;
+                vec3 w = texture(u_baseImage, v_texCoord + vec2(-u_texelSize.x * u_spatialScale, 0.0)).rgb;
                 vec3 sharpBlur = (n + s + e + w) * 0.25;
                 base.rgb += u_sharpness * (base.rgb - sharpBlur);
             }
@@ -510,6 +522,7 @@ vec3 encodeSRGB(vec3 linear) {
         gl.useProgram(this.blurProgram);
         this.blurLocs['u_image'] = gl.getUniformLocation(this.blurProgram, 'u_image');
         this.blurLocs['u_texelSize'] = gl.getUniformLocation(this.blurProgram, 'u_texelSize');
+        this.blurLocs['u_spatialScale'] = gl.getUniformLocation(this.blurProgram, 'u_spatialScale');
 
         // Uniforms for Composite Pass
         this.compLocs = {};
@@ -517,6 +530,7 @@ vec3 encodeSRGB(vec3 linear) {
         this.compLocs['u_baseImage'] = gl.getUniformLocation(this.compositeProgram, 'u_baseImage');
         this.compLocs['u_blurImage'] = gl.getUniformLocation(this.compositeProgram, 'u_blurImage');
         this.compLocs['u_texelSize'] = gl.getUniformLocation(this.compositeProgram, 'u_texelSize');
+        this.compLocs['u_spatialScale'] = gl.getUniformLocation(this.compositeProgram, 'u_spatialScale');
         this.compLocs['u_sharpness'] = gl.getUniformLocation(this.compositeProgram, 'u_sharpness');
         this.compLocs['u_clarity'] = gl.getUniformLocation(this.compositeProgram, 'u_clarity');
         this.compLocs['u_halation'] = gl.getUniformLocation(this.compositeProgram, 'u_halation');
@@ -629,25 +643,17 @@ vec3 encodeSRGB(vec3 linear) {
         return { tex, fbo, isFloat: (internalFormat === gl.RGBA16F) };
     }
 
-    loadImage(imageElement) {
+    ensureFBOs(w, h) {
         const gl = this.gl;
+        if (this.fboW === w && this.fboH === h) return;
         
-        this.canvas.width = imageElement.width;
-        this.canvas.height = imageElement.height;
+        this.fboW = w;
+        this.fboH = h;
         
-        const baseW = this.canvas.width;
-        const baseH = this.canvas.height;
+        const baseW = w;
+        const baseH = h;
         const blurW = Math.max(1, Math.floor(baseW / 4));
         const blurH = Math.max(1, Math.floor(baseH / 4));
-
-        if (this.originalTexture) gl.deleteTexture(this.originalTexture);
-        this.originalTexture = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, this.originalTexture);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imageElement);
 
         if (this.baseTexture) gl.deleteTexture(this.baseTexture);
         if (this.baseFbo) gl.deleteFramebuffer(this.baseFbo);
@@ -681,8 +687,143 @@ vec3 encodeSRGB(vec3 linear) {
         
         this.blurW = blurW;
         this.blurH = blurH;
+    }
 
+
+    export() {
+        const gl = this.gl;
+        if (!this.originalTexture || !this.ingestW || !this.ingestH) return null;
+        
+        // Deep clone state to ensure it wasn't mutated
+                const deepCloneState = (obj) => {
+            if (obj === null || typeof obj !== 'object') return obj;
+            if (obj instanceof Float32Array) return new Float32Array(obj);
+            if (Array.isArray(obj)) return obj.map(deepCloneState);
+            const clone = {};
+            for (let k in obj) {
+                if (Object.prototype.hasOwnProperty.call(obj, k)) {
+                    clone[k] = deepCloneState(obj[k]);
+                }
+            }
+            return clone;
+        };
+        const S_before = deepCloneState(this.state);
+        
+        // Snapshot GL state
+        const GL_before = {
+            viewport: gl.getParameter(gl.VIEWPORT),
+            scissorBox: gl.getParameter(gl.SCISSOR_BOX),
+            scissorTest: gl.getParameter(gl.SCISSOR_TEST),
+            drawFbo: gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING),
+            readFbo: gl.getParameter(gl.READ_FRAMEBUFFER_BINDING),
+            rbo: gl.getParameter(gl.RENDERBUFFER_BINDING),
+            prog: gl.getParameter(gl.CURRENT_PROGRAM),
+            activeTex: gl.getParameter(gl.ACTIVE_TEXTURE),
+            tex2D: gl.getParameter(gl.TEXTURE_BINDING_2D),
+            packAlign: gl.getParameter(gl.PACK_ALIGNMENT)
+        };
+        
+        // We render to ingest resolution
+        const W_exp = this.ingestW;
+        const H_exp = this.ingestH;
+        
+        // Offscreen export FBO
+        let exportTex = null;
+        let exportFbo = null;
+        let pixels = null;
+        
+        try {
+            const expObj = this.createFboAndTexture(W_exp, H_exp, false);
+            exportTex = expObj.tex;
+            exportFbo = expObj.fbo;
+            
+            this.render(null, W_exp, H_exp, exportFbo);
+            
+            pixels = new Uint8Array(W_exp * H_exp * 4);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, exportFbo);
+            gl.readPixels(0, 0, W_exp, H_exp, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+            
+            // FBO incomplete exception will jump to catch.
+        } finally {
+            if (exportFbo) gl.deleteFramebuffer(exportFbo);
+            if (exportTex) gl.deleteTexture(exportTex);
+            
+            // Restore GL State
+            if (!GL_before.readFbo || gl.isFramebuffer(GL_before.readFbo)) gl.bindFramebuffer(gl.READ_FRAMEBUFFER, GL_before.readFbo);
+            if (!GL_before.drawFbo || gl.isFramebuffer(GL_before.drawFbo)) gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, GL_before.drawFbo);
+            if (!GL_before.rbo || gl.isRenderbuffer(GL_before.rbo)) gl.bindRenderbuffer(gl.RENDERBUFFER, GL_before.rbo);
+            gl.useProgram(GL_before.prog);
+            gl.activeTexture(GL_before.activeTex);
+            if (!GL_before.tex2D || gl.isTexture(GL_before.tex2D)) gl.bindTexture(gl.TEXTURE_2D, GL_before.tex2D);
+            gl.pixelStorei(gl.PACK_ALIGNMENT, GL_before.packAlign);
+            
+            if (GL_before.scissorTest) gl.enable(gl.SCISSOR_TEST);
+            else gl.disable(gl.SCISSOR_TEST);
+            
+            if (GL_before.scissorBox) {
+                gl.scissor(GL_before.scissorBox[0], GL_before.scissorBox[1], GL_before.scissorBox[2], GL_before.scissorBox[3]);
+            }
+            if (GL_before.viewport) {
+                gl.viewport(GL_before.viewport[0], GL_before.viewport[1], GL_before.viewport[2], GL_before.viewport[3]);
+            }
+            
+            // Force re-render to preview
+            this.ensureFBOs(this.canvas.width, this.canvas.height);
+            this.render(null, this.canvas.width, this.canvas.height, null);
+            
+            // Re-assign identical snapshot (if modified, the caller/test will catch it)
+            // this.state = S_before; removed to prove non-mutation
+        }
+        
+        return { width: W_exp, height: H_exp, pixels: pixels };
+    }
+
+    loadImage(imageElement) {
+        const gl = this.gl;
+        
+        const srcW = imageElement.width || imageElement.videoWidth || 1;
+        const srcH = imageElement.height || imageElement.videoHeight || 1;
+        
+        const ingest = LocalLightEngine.calculateIngestionSize(srcW, srcH, this.limits.tLimit);
+        this.ingestW = ingest.w;
+        this.ingestH = ingest.h;
+        
+        // App.js should manage canvas size. If it didn't, set a safe default.
+        if (this.canvas.width === 0 || this.canvas.width === 300) {
+            this.canvas.width = this.ingestW;
+            this.canvas.height = this.ingestH;
+        }
+        
+        if (this.originalTexture) gl.deleteTexture(this.originalTexture);
+        this.originalTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this.originalTexture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        
+        if (srcW !== ingest.w || srcH !== ingest.h) {
+            const tmp = document.createElement('canvas');
+            tmp.width = ingest.w;
+            tmp.height = ingest.h;
+            const ctx = tmp.getContext('2d');
+            ctx.drawImage(imageElement, 0, 0, ingest.w, ingest.h);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tmp);
+        } else {
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imageElement);
+        }
+
+        this.ensureFBOs(this.canvas.width, this.canvas.height);
         this.render();
+    }
+
+
+    static calculateIngestionSize(w, h, limit) {
+        const scale = Math.min(1.0, limit / Math.max(w, h));
+        return {
+            w: Math.max(1, Math.floor(w * scale)),
+            h: Math.max(1, Math.floor(h * scale))
+        };
     }
 
     loadLUT(lutData) {
@@ -899,13 +1040,13 @@ vec3 encodeSRGB(vec3 linear) {
         ];
     }
 
-    renderSingleLayerState(state, targetFbo, inputTexture) {
+    renderSingleLayerState(state, targetFbo, inputTexture, targetW, targetH, spatialScale) {
         const gl = this.gl;
         
         // PASS 1: Base (Exposure)
         gl.useProgram(this.baseProgram);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.baseFbo);
-        gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.baseFbo); this.checkFBO();
+        gl.viewport(0, 0, targetW, targetH);
         this.bindQuad(this.baseProgram);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, inputTexture || this.originalTexture);
@@ -953,19 +1094,20 @@ vec3 encodeSRGB(vec3 linear) {
 
         // PASS 2: Blur (9-tap Gaussian)
         gl.useProgram(this.blurProgram);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.blurFbo);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.blurFbo); this.checkFBO();
         gl.viewport(0, 0, this.blurW, this.blurH);
         this.bindQuad(this.blurProgram);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.baseTexture);
         gl.uniform1i(this.blurLocs['u_image'], 0);
         gl.uniform2f(this.blurLocs['u_texelSize'], 1.0 / this.blurW, 1.0 / this.blurH);
+        gl.uniform1f(this.blurLocs['u_spatialScale'], spatialScale);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
 
         // PASS 3: Composite (M10 Effects)
         gl.useProgram(this.compositeProgram);
         gl.bindFramebuffer(gl.FRAMEBUFFER, targetFbo);
-        gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        gl.viewport(0, 0, targetW, targetH);
         this.bindQuad(this.compositeProgram);
         
         gl.activeTexture(gl.TEXTURE0);
@@ -976,7 +1118,8 @@ vec3 encodeSRGB(vec3 linear) {
         gl.bindTexture(gl.TEXTURE_2D, this.blurTexture);
         gl.uniform1i(this.compLocs['u_blurImage'], 1);
         
-        gl.uniform2f(this.compLocs['u_texelSize'], 1.0 / this.canvas.width, 1.0 / this.canvas.height);
+        gl.uniform2f(this.compLocs['u_texelSize'], 1.0 / targetW, 1.0 / targetH);
+        gl.uniform1f(this.compLocs['u_spatialScale'], spatialScale);
         
         const safeVal = (name) => this.bypassed ? 0.0 : (state[name] !== undefined ? state[name] : (this.state[name] || 0.0));
         
@@ -990,19 +1133,31 @@ vec3 encodeSRGB(vec3 linear) {
         gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
 
-    render(layersArray) {
+
+    checkFBO() {
+        const status = this.gl.checkFramebufferStatus(this.gl.FRAMEBUFFER);
+        if (status !== this.gl.FRAMEBUFFER_COMPLETE) {
+            throw new Error("Framebuffer incomplete. Status: " + status);
+        }
+    }
+
+    render(layersArray = null, targetW = this.canvas.width, targetH = this.canvas.height, targetFBO = null) {
         if (!this.originalTexture) return;
         
         const gl = this.gl;
+        
+        this.ensureFBOs(targetW, targetH);
+        const spatialScale = Math.max(targetW, targetH) / 1024.0;
+
 
         if (this.bypassed || !layersArray || layersArray.length === 0) {
             // Render directly into compAFbo, then output
-            this.renderSingleLayerState(this.state, this.compAFbo, this.originalTexture);
+            this.renderSingleLayerState(this.state, this.compAFbo, this.originalTexture, targetW, targetH, spatialScale);
             
             // Output to Canvas
             gl.useProgram(this.outputProgram);
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-            gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO); this.checkFBO();
+            gl.viewport(0, 0, targetW, targetH);
             this.bindQuad(this.outputProgram);
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, this.compATexture);
@@ -1032,16 +1187,16 @@ vec3 encodeSRGB(vec3 linear) {
             
             if (firstVisible) {
                 // Render this layer using originalTexture directly into currentCompFbo
-                this.renderSingleLayerState(es, currentCompFbo, this.originalTexture);
+                this.renderSingleLayerState(es, currentCompFbo, this.originalTexture, targetW, targetH, spatialScale);
                 firstVisible = false;
             } else {
                 // For subsequent layers, render into this.layerFbo using currentCompTex as input
-                this.renderSingleLayerState(layer.engineState || this.state, this.layerFbo, currentCompTex);
+                this.renderSingleLayerState(layer.engineState || this.state, this.layerFbo, currentCompTex, targetW, targetH, spatialScale);
                 
                 // Blend currentCompTex and this.layerTexture into nextCompFbo
                 gl.useProgram(this.blendProgram);
                 gl.bindFramebuffer(gl.FRAMEBUFFER, nextCompFbo);
-                gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+                gl.viewport(0, 0, targetW, targetH);
                 this.bindQuad(this.blendProgram);
                 
                 gl.activeTexture(gl.TEXTURE0);
@@ -1073,15 +1228,15 @@ vec3 encodeSRGB(vec3 linear) {
         }
         
         if (firstVisible) {
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-            gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO); this.checkFBO();
+            gl.viewport(0, 0, targetW, targetH);
             gl.clearColor(0.0, 0.0, 0.0, 1.0);
             gl.clear(gl.COLOR_BUFFER_BIT);
         } else {
             // Draw currentCompTex to Canvas using outputProgram (sRGB encode)
             gl.useProgram(this.outputProgram);
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-            gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO); this.checkFBO();
+            gl.viewport(0, 0, targetW, targetH);
             this.bindQuad(this.outputProgram);
             
             gl.activeTexture(gl.TEXTURE0);

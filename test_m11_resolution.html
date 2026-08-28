@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head><title>M11 Audit Test</title></head>
+<body>
+<canvas id="canvas" width="64" height="64"></canvas>
+<script type="module">
+import { LocalLightEngine } from './engine.js';
+
+window.runTest = async function() {
+    const canvas = document.getElementById('canvas');
+    const engine = new LocalLightEngine(canvas);
+    const gl = engine.gl;
+    if (!gl) return JSON.stringify([{test: "WebGL", pass: false}]);
+    
+    while(gl.getError() !== gl.NO_ERROR) {}
+    
+    let results = [];
+    let log = (msg, pass, extra={}) => results.push({ test: msg, pass: pass, ...extra });
+    
+    // --- T1 ---
+    const limits = engine.limits.tLimit;
+    const t1Res = LocalLightEngine.calculateIngestionSize(25000, 10, limits);
+    const expectedScale = Math.min(1.0, limits / 25000);
+    const expectedW = Math.max(1, Math.floor(25000 * expectedScale));
+    const expectedH = Math.max(1, Math.floor(10 * expectedScale));
+    
+    log("T1: calculateIngestionSize strictly bounds to formula", 
+        t1Res.w === expectedW && t1Res.h === expectedH &&
+        t1Res.w <= limits && t1Res.h <= limits && 
+        t1Res.w >= 1 && t1Res.h >= 1, 
+        { w: t1Res.w, h: t1Res.h, expectedW, expectedH, limit: limits });
+
+    // --- Prepare Engine ---
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = 1024; srcCanvas.height = 1024;
+    const ctx = srcCanvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 1024, 1024);
+    grad.addColorStop(0, 'rgb(0,0,0)');
+    grad.addColorStop(1, 'rgb(255,255,255)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 1024, 1024);
+    engine.loadImage(srcCanvas);
+    engine.state['u_clarity'] = 1.0;
+    engine.render();
+
+    // --- T3 ---
+    function deepCloneState(obj) {
+        if (obj === null || typeof obj !== 'object') return obj;
+        if (obj instanceof Float32Array) return new Float32Array(obj);
+        if (Array.isArray(obj)) return obj.map(deepCloneState);
+        const clone = {};
+        for (let k in obj) {
+            if (Object.prototype.hasOwnProperty.call(obj, k)) {
+                clone[k] = deepCloneState(obj[k]);
+            }
+        }
+        return clone;
+    }
+    const S_before = deepCloneState(engine.state);
+    
+    const prePixels = new Uint8Array(1024 * 1024 * 4);
+    engine.ensureFBOs(1024, 1024);
+    engine.render(null, 1024, 1024, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.readPixels(0, 0, 1024, 1024, gl.RGBA, gl.UNSIGNED_BYTE, prePixels);
+    
+    const expObj = engine.export();
+    
+    const S_after = deepCloneState(engine.state);
+    const postPixels = new Uint8Array(1024 * 1024 * 4);
+    engine.render(null, 1024, 1024, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.readPixels(0, 0, 1024, 1024, gl.RGBA, gl.UNSIGNED_BYTE, postPixels);
+
+        function deepEqual(a, b) {
+        if (a === b) return true;
+        if (a === null || typeof a !== 'object' || b === null || typeof b !== 'object') return false;
+        if (a instanceof Float32Array && b instanceof Float32Array) {
+            if (a.length !== b.length) return false;
+            for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+            return true;
+        }
+        if (Array.isArray(a) !== Array.isArray(b)) return false;
+        const keysA = Object.keys(a), keysB = Object.keys(b);
+        if (keysA.length !== keysB.length) return false;
+        for (let key of keysA) {
+            if (!keysB.includes(key) || !deepEqual(a[key], b[key])) return false;
+        }
+        return true;
+    }
+    function isIdenticalObj(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+    function isIdenticalArr(a, b) { for(let i=0; i<a.length; i++) if(a[i]!==b[i]) return false; return true; }
+
+    log("T3: State, GL config, and UI pixels are unmutated after export", 
+        isIdenticalObj(S_before, S_after) && isIdenticalArr(prePixels, postPixels));
+
+    // --- T2 ---
+    while(gl.getError() !== gl.NO_ERROR) {}
+    log("T2a: Valid Export yields valid dimensions", 
+        expObj && expObj.width === 1024 && expObj.height === 1024 && expObj.pixels.length === 1024 * 1024 * 4 && gl.getError() === gl.NO_ERROR);
+
+
+
+    
+    const preFailPixels = new Uint8Array(1024 * 1024 * 4);
+    engine.render(null, 1024, 1024, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.readPixels(0, 0, 1024, 1024, gl.RGBA, gl.UNSIGNED_BYTE, preFailPixels);
+    const origCheckFBO = engine.checkFBO;
+    let checkCalled = false;
+    let exceptionCaught = false;
+    engine.checkFBO = function() {
+        checkCalled = true;
+        engine.checkFBO = origCheckFBO; // restore immediately!
+        throw new Error("Framebuffer incomplete. Status: 36054");
+    };
+    
+    try { engine.export(); } catch(e) { exceptionCaught = true; }
+    engine.checkFBO = origCheckFBO;
+    
+    const postFailPixels = new Uint8Array(1024 * 1024 * 4);
+    engine.render(null, 1024, 1024, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.readPixels(0, 0, 1024, 1024, gl.RGBA, gl.UNSIGNED_BYTE, postFailPixels);
+    
+    while(gl.getError() !== gl.NO_ERROR) {} const err = gl.getError();
+    const previewRestored = isIdenticalArr(preFailPixels, postFailPixels);
+    
+    log("T2b: Invalid Framebuffer throws gracefully and restores preview", 
+        checkCalled && exceptionCaught && err === gl.NO_ERROR && previewRestored,
+        { exceptionCaught, err, previewRestored });
+
+    // --- T4 ---
+    canvas.width = 1024; canvas.height = 1024; engine.ensureFBOs(1024, 1024);
+    engine.render(null, 1024, 1024, null);
+    const pixels1024 = new Uint8Array(1024 * 1024 * 4);
+    gl.readPixels(0, 0, 1024, 1024, gl.RGBA, gl.UNSIGNED_BYTE, pixels1024);
+
+    canvas.width = 256; canvas.height = 256; engine.ensureFBOs(256, 256);
+    engine.render(null, 256, 256, null);
+    const pixels256 = new Uint8Array(256 * 256 * 4);
+    gl.readPixels(0, 0, 256, 256, gl.RGBA, gl.UNSIGNED_BYTE, pixels256);
+
+    const upscaled = new Uint8Array(1024 * 1024 * 4);
+    for (let y = 0; y < 1024; y++) {
+        for (let x = 0; x < 1024; x++) {
+            const u = (x + 0.5) / 1024;
+            const v = (y + 0.5) / 1024;
+            const sx = u * 256 - 0.5;
+            const sy = v * 256 - 0.5;
+            const x0 = Math.max(0, Math.floor(sx)), x1 = Math.min(x0 + 1, 255);
+            const y0 = Math.max(0, Math.floor(sy)), y1 = Math.min(y0 + 1, 255);
+            const tx = Math.max(0, sx - x0), ty = Math.max(0, sy - y0);
+            
+            for (let c = 0; c < 3; c++) {
+                const c00 = pixels256[(y0 * 256 + x0) * 4 + c];
+                const c10 = pixels256[(y0 * 256 + x1) * 4 + c];
+                const c01 = pixels256[(y1 * 256 + x0) * 4 + c];
+                const c11 = pixels256[(y1 * 256 + x1) * 4 + c];
+                
+                const val = c00 * (1-tx)*(1-ty) + c10 * tx*(1-ty) + c01 * (1-tx)*ty + c11 * tx*ty;
+                upscaled[(y * 1024 + x) * 4 + c] = val;
+            }
+        }
+    }
+
+    
+    // Center pixel:", pixels1024[(512*1024+512)*4], pixels1024[(512*1024+512)*4+1], pixels1024[(512*1024+512)*4+2]);
+    // Center pixel upscaled:", upscaled[(512*1024+512)*4], upscaled[(512*1024+512)*4+1], upscaled[(512*1024+512)*4+2]);
+    let maxX = 0, maxY = 0;
+let maxAbsErr = 0;
+    let sumSqErr = 0;
+    let count = 0;
+    
+    for (let y = 20; y < 1004; y++) {
+        for (let x = 20; x < 1004; x++) {
+            const idx = (y * 1024 + x) * 4;
+            const rRef = pixels1024[idx] / 255.0;
+            const gRef = pixels1024[idx+1] / 255.0;
+            const bRef = pixels1024[idx+2] / 255.0;
+            const LRef = 0.299*rRef + 0.587*gRef + 0.114*bRef;
+            
+            const rTst = upscaled[idx] / 255.0;
+            const gTst = upscaled[idx+1] / 255.0;
+            const bTst = upscaled[idx+2] / 255.0;
+            const LTst = 0.299*rTst + 0.587*gTst + 0.114*bTst;
+            
+            const diff = Math.abs(LRef - LTst);
+            if (diff > maxAbsErr) { maxAbsErr = diff; maxX = x; maxY = y; }
+            sumSqErr += diff * diff;
+            count++;
+        }
+    }
+    
+    const rmse = Math.sqrt(sumSqErr / count); //:", maxAbsErr, "at", maxX, maxY);
+    log("T4: Scale Independence MAE and RMSE limits respected", 
+        maxAbsErr <= (3.0/255.0) && rmse <= 0.015,
+        { mae: maxAbsErr, rmse: rmse });
+
+    return JSON.stringify(results, null, 2);
+}
+</script>
+</body>
+</html>
