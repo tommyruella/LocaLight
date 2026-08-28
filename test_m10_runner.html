@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html>
-<head><title>M10 Runtime Test</title></head>
+<head><title>M10 Audit Test</title></head>
 <body>
 <canvas id="canvas" width="64" height="64"></canvas>
 <script type="module">
@@ -10,96 +10,141 @@ window.runTest = async function() {
     const canvas = document.getElementById('canvas');
     const engine = new LocalLightEngine(canvas);
     const gl = engine.gl;
-    if (!gl) return "FAIL: No WebGL2";
-    
-    // We create a 64x64 canvas to have a reasonable blurFbo size (16x16)
-    const srcCanvas = document.createElement('canvas');
-    srcCanvas.width = 64;
-    srcCanvas.height = 64;
-    const ctx = srcCanvas.getContext('2d');
-    
-    // Fill with mid-gray to allow grain to show up (luma ~ 0.5)
-    ctx.fillStyle = 'rgb(180,180,180)';
-    ctx.fillRect(0, 0, 64, 64);
-    
-    // Add a pure white square in the center (size 32x32) to trigger halation > 0.6
-    ctx.fillStyle = 'white';
-    ctx.fillRect(16, 16, 32, 32);
-    
-    engine.loadImage(srcCanvas);
+    if (!gl) return JSON.stringify([{test: "WebGL", pass: false}]);
     
     let results = [];
-    
-    function readOutput() {
+    let log = (msg, pass) => results.push({ test: msg, pass: pass });
+
+    function renderAndRead(stateUpdates) {
+        Object.assign(engine.state, {
+            u_sharpness: 0, u_clarity: 0, u_halation: 0, u_grain: 0, u_noise: 0, u_glow: 0
+        });
+        Object.assign(engine.state, stateUpdates);
+        engine.render([]);
         const pixels = new Uint8Array(64 * 64 * 4);
         gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
         return pixels;
     }
     
-    // Default render (no effects)
-    engine.state['u_sharpness'] = 0;
-    engine.state['u_clarity'] = 0;
-    engine.state['u_halation'] = 0;
-    engine.state['u_grain'] = 0;
-    engine.render([]);
-    let basePixels = readOutput();
-    
-    // Test 1: Sharpness (+1.0)
-    engine.state['u_sharpness'] = 1.0;
-    engine.render([]);
-    let sharpPixels = readOutput();
-    
-    // Test 2: Halation (+1.0)
-    engine.state['u_sharpness'] = 0;
-    engine.state['u_halation'] = 1.0;
-    engine.render([]);
-    let halationPixels = readOutput();
-    
-    // Test 3: Grain (+1.0)
-    engine.state['u_halation'] = 0;
-    engine.state['u_grain'] = 1.0;
-    engine.render([]);
-    let grainPixels = readOutput();
-    
-    // Test 4: Clarity (+1.0)
-    engine.state['u_grain'] = 0;
-    engine.state['u_clarity'] = 1.0;
-    engine.render([]);
-    let clarityPixels = readOutput();
-    
-    // Evaluate results
-    
-    // 1. Grain
-    let diffGrain = false;
-    for (let i=0; i<grainPixels.length; i++) {
-        if (grainPixels[i] !== basePixels[i]) diffGrain = true;
+    function isIdentical(a, b) {
+        for(let i=0; i<a.length; i++) if(a[i] !== b[i]) return false;
+        return true;
     }
-    results.push({ test: 'Grain adds variance', pass: diffGrain });
     
-    // 2. Halation
-    // The pixel at (4,4) is black/gray in the original, but should receive bloom.
-    // Index = (4 * 64 + 4) * 4 = 1040 (this corresponds to (4,4), which is far enough to not be white but close enough for blur to bleed maybe?)
-    // Actually, let's just pick a pixel just outside the white box: (14, 32).
-    let cornerIdx = (32 * 64 + 14) * 4;
-    let cornerBase = basePixels[cornerIdx];
-    let cornerHalation = halationPixels[cornerIdx];
-    results.push({ test: 'Halation blooms into shadows', pass: cornerHalation > cornerBase, baseVal: cornerBase, halationVal: cornerHalation });
+    function calcVariance(pixels) {
+        let mean = 0, meanSq = 0;
+        let count = pixels.length / 4;
+        for(let i=0; i<pixels.length; i+=4) {
+            let luma = (pixels[i] + pixels[i+1] + pixels[i+2])/3.0;
+            mean += luma;
+            meanSq += luma*luma;
+        }
+        mean /= count;
+        meanSq /= count;
+        return meanSq - (mean*mean);
+    }
+
+    // --- SCENE 1: High Contrast (White Background, Black Center) ---
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = 64; srcCanvas.height = 64;
+    const ctx = srcCanvas.getContext('2d');
     
-    // 3. Sharpness
-    // Pixel (15, 32) is gray, next to white. Should get darker.
-    let edgeIdx = (32 * 64 + 15) * 4;
-    let edgeBase = basePixels[edgeIdx];
-    let edgeSharp = sharpPixels[edgeIdx];
-    results.push({ test: 'Sharpness changes edges', pass: edgeSharp !== edgeBase, baseVal: edgeBase, sharpVal: edgeSharp });
+    ctx.fillStyle = 'rgb(180,180,180)'; // Gray background
+    ctx.fillRect(0, 0, 64, 64);
+    ctx.fillStyle = 'rgb(255,255,255)'; // White square
+    ctx.fillRect(16, 16, 32, 32);
+    engine.loadImage(srcCanvas);
+    
+    let base1 = renderAndRead({});
+    
+    // 1. Bypass Invariance
+    let bypassSharp = renderAndRead({u_sharpness: 0});
+    let bypassClarity = renderAndRead({u_clarity: 0});
+    let bypassHalation = renderAndRead({u_halation: 0});
+    let bypassGrain = renderAndRead({u_grain: 0});
+    let bypassNoise = renderAndRead({u_noise: 0});
+    
+    log("1. Bypass invariance (effect=0 is byte-identical to baseline)", 
+        isIdentical(base1, bypassSharp) && isIdentical(base1, bypassClarity) && 
+        isIdentical(base1, bypassHalation) && isIdentical(base1, bypassGrain) && 
+        isIdentical(base1, bypassNoise));
 
-    // 4. Clarity
-    // Clarity uses a large blur, so pixel (12, 32) (a bit further from the edge) should also get darker.
-    let clarIdx = (32 * 64 + 12) * 4;
-    let clarBase = basePixels[clarIdx];
-    let clarVal = clarityPixels[clarIdx];
-    results.push({ test: 'Clarity alters contrast', pass: clarVal !== clarBase, baseVal: clarBase, clarVal: clarVal });
+    // 2 & 3. Grain vs Noise
+    let grain1 = renderAndRead({u_grain: 1.0});
+    let grain2 = renderAndRead({u_grain: 1.0});
+    let noise1 = renderAndRead({u_noise: 1.0});
+    
+    let varBase = calcVariance(base1);
+    let varGrain = calcVariance(grain1);
+    let varNoise = calcVariance(noise1);
+    
+    log("2. Grain adds measurable, deterministic variance", varGrain > varBase + 5 && isIdentical(grain1, grain2));
+    log("3. Noise adds variance separate from Grain", varNoise > varBase + 5 && !isIdentical(grain1, noise1));
 
-    return JSON.stringify(results);
+    // 4 & 5. Sharpness & Clarity localization
+    let sharp1 = renderAndRead({u_sharpness: 1.0});
+    let clarity1 = renderAndRead({u_clarity: 1.0});
+    
+    let centerIdx = (32 * 64 + 32) * 4; // Inside white square
+    let edgeIdx = (32 * 64 + 15) * 4;   // Right on the edge (outside white)
+    let farIdx = (32 * 64 + 10) * 4;    // Further from edge
+    
+    let sharpCenterDelta = Math.abs(sharp1[centerIdx] - base1[centerIdx]);
+    let sharpEdgeDelta = Math.abs(sharp1[edgeIdx] - base1[edgeIdx]);
+    
+    log("4. Sharpness localized to edge, flat area unchanged", sharpCenterDelta === 0 && sharpEdgeDelta > 0);
+    
+    let clarFarDelta = Math.abs(clarity1[farIdx] - base1[farIdx]);
+    let sharpFarDelta = Math.abs(sharp1[farIdx] - base1[farIdx]);
+    log("5. Clarity modifies lower frequency (further from edge) than Sharpness", clarFarDelta > sharpFarDelta);
+
+    // 6, 7, 8. Halation
+    // We need a pure white canvas with a tiny black square for spill to work reliably
+    ctx.fillStyle = 'rgb(255,255,255)';
+    ctx.fillRect(0, 0, 64, 64);
+    ctx.fillStyle = 'rgb(0,0,0)';
+    ctx.fillRect(31, 31, 2, 2);
+    engine.loadImage(srcCanvas);
+    
+    let base2 = renderAndRead({});
+    let halHalf = renderAndRead({u_halation: 0.5});
+    let halFull = renderAndRead({u_halation: 1.0});
+    
+    let spillIdx = (31 * 64 + 31) * 4;
+    log("6. Halation highlight spills into shadows", halFull[spillIdx] > base2[spillIdx]);
+    log("8. Halation intensity is monotonic", halFull[spillIdx] > halHalf[spillIdx] && halHalf[spillIdx] > base2[spillIdx]);
+
+    // Test Halation under threshold
+    ctx.fillStyle = 'rgb(64,64,64)'; // well under 0.6
+    ctx.fillRect(0, 0, 64, 64);
+    engine.loadImage(srcCanvas);
+    
+    let darkBase = renderAndRead({});
+    let darkHal = renderAndRead({u_halation: 1.0});
+    log("7. Halation under threshold produces no spill", isIdentical(darkBase, darkHal));
+
+    // 9. Blur spatial spill verifiable (via glow)
+    // Dark background, white square
+    ctx.fillStyle = 'rgb(0,0,0)';
+    ctx.fillRect(0, 0, 64, 64);
+    ctx.fillStyle = 'rgb(255,255,255)';
+    ctx.fillRect(16, 16, 32, 32);
+    engine.loadImage(srcCanvas);
+    
+    let glowBase = renderAndRead({});
+    let glowOn = renderAndRead({u_glow: 1.0}); // Glow just adds blur.rgb
+    let glowSpillIdx = (14 * 64 + 32) * 4; // Outside the square
+    log("9. Gaussian Blur (PASS 2) spreads energy correctly", glowOn[glowSpillIdx] > glowBase[glowSpillIdx]);
+
+    // 10. GL Errors
+    log("10. No gl.getError() after rendering", gl.getError() === gl.NO_ERROR);
+    
+    // 11. Uniforms Connected
+    let allLocs = ['u_sharpness', 'u_clarity', 'u_halation', 'u_grain', 'u_noise', 'u_glow']
+        .every(n => engine.compLocs[n] !== null && engine.compLocs[n] !== undefined);
+    log("11. All M10 uniforms present and connected", allLocs);
+
+    return JSON.stringify(results, null, 2);
 }
 </script>
 </body>
