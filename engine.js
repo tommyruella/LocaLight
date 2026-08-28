@@ -474,6 +474,9 @@ vec3 encodeSRGB(vec3 linear) {
                 base.rgb += u_noise * noiseVal * 0.1;
             }
             
+            if (u_pipelineVersion != 1) {
+                base.rgb = clamp(base.rgb, 0.0, 65000.0);
+            }
             outColor = base;
         }`;
 
@@ -516,7 +519,11 @@ vec3 encodeSRGB(vec3 linear) {
                 }
             }
             
-            outColor = vec4(mix(base, blended, u_opacity), 1.0);
+            vec3 finalColor = mix(base, blended, u_opacity);
+            if (u_pipelineVersion != 1) {
+                finalColor = clamp(finalColor, 0.0, 65000.0);
+            }
+            outColor = vec4(finalColor, 1.0);
         }`;
 
         const fsOutputSource = `#version 300 es
