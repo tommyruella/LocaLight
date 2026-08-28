@@ -10,26 +10,12 @@ window.runTest = async function() {
     const canvas = document.getElementById('canvas');
     const engine = new LocalLightEngine(canvas);
     
-    // We want to test the fsBaseSource which processes `color.rgb`.
-    // Let's create a custom small test that directly compiles fsBaseSource and runs it on a 1x1 canvas.
     const gl = engine.gl;
     if (!gl) return "FAIL: No WebGL2";
     
-    // Instead of full engine render, we will compile fsBaseSource and a basic vertex shader.
-    const vs = `#version 300 es
-    in vec2 a_position;
-    out vec2 v_texCoord;
-    void main() {
-        gl_Position = vec4(a_position, 0.0, 1.0);
-        v_texCoord = a_position * 0.5 + 0.5;
-    }`;
-    
-    // We need to fetch fsBaseSource from engine.js. It's inside the initShaders method.
-    // It's a string literal. Let's just hook the compiled baseProgram.
     const prog = engine.baseProgram;
     gl.useProgram(prog);
     
-    // Set up a 1x1 texture to feed into u_image
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -43,13 +29,12 @@ window.runTest = async function() {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, outTex, 0);
     
-    // Set up standard uniforms to neutral so ONLY u_hsl_shifts affect it.
     gl.uniform1f(engine.baseLocs['u_exposure'], 0.0);
     gl.uniform3fv(engine.baseLocs['u_wb_scale'], [1,1,1]);
-    gl.uniform1i(engine.baseLocs['u_is_srgb_input'], 0); // feed linear RGB
+    gl.uniform1i(engine.baseLocs['u_is_srgb_input'], 0);
     gl.uniform1fv(engine.baseLocs['u_spline_x'], [-12, -6, 0, 6, 12]);
     gl.uniform1fv(engine.baseLocs['u_spline_y'], [-12, -6, 0, 6, 12]);
-    gl.uniform1fv(engine.baseLocs['u_spline_m'], [1, 1, 1, 1, 1]); // Identity curve
+    gl.uniform1fv(engine.baseLocs['u_spline_m'], [1, 1, 1, 1, 1]);
     gl.uniform1f(engine.baseLocs['u_saturation'], 0.0);
     gl.uniform1f(engine.baseLocs['u_vibrance'], 0.0);
     gl.uniform3fv(engine.baseLocs['u_lift'], [0,0,0]);
@@ -58,7 +43,6 @@ window.runTest = async function() {
     
     const shifts = new Float32Array(24);
     
-    // Helper to run one pixel
     function testPixel(r, g, b, shiftsArray) {
         gl.uniform1fv(engine.baseLocs['u_hsl_shifts'], shiftsArray);
         gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -73,21 +57,42 @@ window.runTest = async function() {
     
     let results = [];
     
-    // Test 1: Red shift (+1.0 max Hue on Red band)
-    shifts[0] = 1.0;
-    let resRed = testPixel(1.0, 0.0, 0.0, shifts);
-    let resBlue = testPixel(0.0, 0.0, 1.0, shifts);
-    
-    results.push({ test: 'Red Shift', outRed: resRed, outBlue: resBlue });
-    
-    // Test 2: Midpoint 15 degrees (Red 1.0, Orange 0.5 => 15 deg in RGB is approx 1, 0.25, 0 but wait, let's just supply the rgb of 15 deg)
-    // 15 deg: p=0, q=1, h=15/360. R=1, G=15/60=0.25, B=0
+    // 1. Midpoint (15 deg) - Red Shift +0.5
     shifts.fill(0);
     shifts[0] = 0.5;
-    shifts[3] = -0.5;
-    let resMid = testPixel(1.0, 0.25, 0.0, shifts);
-    results.push({ test: 'Midpoint 15 deg', outMid: resMid });
+    let resMidRed = testPixel(1.0, 0.25, 0.0, shifts);
+    results.push({ test: 'Midpoint 15deg (Red +0.5)', actual: resMidRed, expected: [1.0, 0.4375, 0.0] });
+
+    // 2. Midpoint (15 deg) - Orange Shift +0.5
+    shifts.fill(0);
+    shifts[3] = 0.5; // Orange H is at index 3
+    let resMidOrange = testPixel(1.0, 0.25, 0.0, shifts);
+    results.push({ test: 'Midpoint 15deg (Orange +0.5)', actual: resMidOrange, expected: [1.0, 0.4375, 0.0] });
     
+    // 3. Wrap-around 350deg - Red Shift +1.0
+    // 350 deg RGB: [1.0, 0.0, 10/60] = [1.0, 0.0, 0.1666]
+    shifts.fill(0);
+    shifts[0] = 1.0;
+    let resWrapRed = testPixel(1.0, 0.0, 10.0/60.0, shifts);
+    results.push({ test: 'Wrap 350deg (Red +1.0)', actual: resWrapRed, expected: [1.0, 0.5277, 0.0] });
+
+    // 4. Wrap-around 350deg - Magenta Shift +1.0
+    shifts.fill(0);
+    shifts[21] = 1.0; // Magenta H is at index 21
+    let resWrapMag = testPixel(1.0, 0.0, 10.0/60.0, shifts);
+    results.push({ test: 'Wrap 350deg (Magenta +1.0)', actual: resWrapMag, expected: [1.0, 0.0, 0.1111] });
+    
+    // 5. Saturation/Lightness clamp
+    shifts.fill(0);
+    shifts[1] = 1.0; // Red Sat +1.0
+    let resSat = testPixel(0.6, 0.4, 0.4, shifts);
+    results.push({ test: 'Desaturated (Red Sat +1.0)', actual: resSat, expected: [1.0, 0.0, 0.0] });
+
+    shifts.fill(0);
+    shifts[2] = 1.0; // Red Lum +1.0
+    let resLum = testPixel(0.6, 0.4, 0.4, shifts);
+    results.push({ test: 'Desaturated (Red Lum +1.0)', actual: resLum, expected: [1.0, 1.0, 1.0] });
+
     return JSON.stringify(results);
 }
 </script>
