@@ -62,6 +62,7 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 
 **Architecture:**
 - Voxel sampling 3D applicato esclusivamente in spazio display-referred (dopo `encodeSRGB`).
+- Configurazione filtro TEXTURE_3D dipendente da capability hardware `OES_texture_half_float_linear` via `this.caps`.
 - Padding RGBA16F automatico in fase di caricamento per stabilità driver Mac/Metal.
 
 **Required invariants:**
@@ -72,7 +73,7 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 - Fallback su texture 2D per un sampler 3D in GLSL.
 
 **Required tests:**
-- N/A numerico, validazione architetturale dell'upload e fallbacks.
+- `test_lut.js` (verifica ordine di esecuzione `encodeSRGB` -> `texture` e logica identità se `intensity=0`).
 
 **Acceptance criteria:**
 - Caricamento stabile e rendering applicato nell'ultimo pass di composite.
