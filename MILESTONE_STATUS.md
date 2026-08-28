@@ -157,3 +157,40 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 
 **Known limitations**:
 - Il calcolo dell'errore (MAE) su bordi hard-edge con shader multi-pass e downsampling comporta inevitabilmente aliasing da interpolazione. Si risolve testando l'effetto su layer lineari (gradienti continui).
+
+## MILESTONE 6: Wheels ASC CDL
+**Status:** VERIFIED
+
+**Architecture:**
+- Traslazione del segnale lineare tramite equazione ASC CDL estesa (Gain, Gamma, Lift).
+- Lift formulato come traslazione `+ u_lift * max(1.0 - color, 0.0)` per impedire l'inversione e il clipping degli highlight estremi.
+- Signed power applicata al Gamma (`sign(color) * pow(abs(color))`) per sopprimere artefatti su colori out-of-gamut o differenziali negativi.
+
+**Required invariants:**
+- `u_lift = 0, u_gamma = 1, u_gain = 1` restituisce il bypass perfetto (zero diff).
+- Le direzioni tonali devono seguire le prescrizioni CDL senza generare NaN.
+- Le matrici di andata e ritorno (sRGB -> LMS -> sRGB) devono preservare l'identità numerica.
+
+**Required tests:**
+- `test_m6_playwright.js` e `test_color_matrices.js`.
+
+**Known limitations:**
+- N/A
+
+## MILESTONE 7: Saturation / Vibrance
+**Status:** VERIFIED
+
+**Architecture:**
+- Computazione Luma effettuata in spazio lineare post-LMS usando pesi Rec.709 (`0.2126, 0.7152, 0.0722`).
+- Saturation eseguita come semplice interpolazione `mix(Luma, RGB, 1 + sat)`.
+- Vibrance calcolata come modulazione inversa alla saturazione nativa locale (`1 - clamp(currentSat)`).
+
+**Required invariants:**
+- `u_saturation = 0, u_vibrance = 0` garantisce il bypass invariato.
+- `u_saturation = -1` distrugge integralmente il croma garantendo convergenza a `R=G=B=Luma`.
+
+**Required tests:**
+- `test_m7_playwright.js`.
+
+**Known limitations:**
+- N/A

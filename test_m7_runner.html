@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head><title>M7 Saturation/Vibrance Test</title></head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import { LocalLightEngine } from './engine.js';
+
+window.runTest = async function() {
+    let results = [];
+    function log(name, pass, data={}) {
+        results.push({ test: name, pass: pass, ...data });
+    }
+
+    const W = 256;
+    const H = 256;
+    const canvas = document.getElementById('c');
+    canvas.width = W;
+    canvas.height = H;
+    const gl = canvas.getContext('webgl2', {preserveDrawingBuffer: true});
+    const engine = new LocalLightEngine(canvas, gl);
+    
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = W; srcCanvas.height = H;
+    const ctx = srcCanvas.getContext('2d');
+    
+    ctx.fillStyle = 'rgb(200, 100, 100)'; 
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillStyle = 'rgb(255, 0, 0)';
+    ctx.fillRect(128, 0, 128, 128);
+    ctx.fillStyle = 'rgb(100, 100, 100)';
+    ctx.fillRect(0, 128, 256, 128);
+    
+    engine.loadImage(srcCanvas);
+    
+    function renderAndRead(stateUpdates) {
+        Object.assign(engine.state, { u_saturation: 0, u_vibrance: 0 });
+        Object.assign(engine.state, stateUpdates);
+        engine.render([]);
+        const outPixels = new Uint8Array(W * H * 4);
+        gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, outPixels);
+        return outPixels;
+    }
+    
+    const base = renderAndRead({});
+    
+    const bypass = renderAndRead({ u_saturation: 0, u_vibrance: 0 });
+    let maxDiffBypass = 0;
+    for (let i = 0; i < base.length; i++) {
+        maxDiffBypass = Math.max(maxDiffBypass, Math.abs(base[i] - bypass[i]));
+    }
+    log("1. SATURATION NEUTRAL", maxDiffBypass === 0, { maxDiff: maxDiffBypass });
+    
+    const grayTest = renderAndRead({ u_saturation: -1.0 });
+    const idxModRed = (192 * W + 64) * 4;
+    const rG = grayTest[idxModRed];
+    const gG = grayTest[idxModRed+1];
+    const bG = grayTest[idxModRed+2];
+    const isGray = (rG === gG && gG === bG);
+    
+    // We expect ~128. Tolerance of 5 is safe.
+    log("2. SATURATION -1 & LUMA PIVOT", isGray && Math.abs(rG - 128) <= 5, { rG, gG, bG });
+    
+    const satTest = renderAndRead({ u_saturation: 1.0 });
+    const rS = satTest[idxModRed];
+    const gS = satTest[idxModRed+1];
+    log("3. SATURATION POSITIVA", rS > base[idxModRed] && gS < base[idxModRed+1], 
+        { rS, gS, rBase: base[idxModRed], gBase: base[idxModRed+1] });
+        
+    const vibTest = renderAndRead({ u_vibrance: 1.0 });
+    const idxFullRed = (192 * W + 192) * 4;
+    
+    const rVibMod = vibTest[idxModRed];
+    const rVibFull = vibTest[idxFullRed];
+    
+    const deltaMod = rVibMod - base[idxModRed]; 
+    const deltaFull = rVibFull - base[idxFullRed]; 
+    
+    log("4. VIBRANCE differential", deltaMod > 0 && deltaFull <= deltaMod, 
+        { deltaMod, deltaFull });
+        
+    return results;
+}
+</script>
+</body>
+</html>
