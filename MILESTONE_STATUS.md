@@ -133,7 +133,7 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 - Halation calculates threshold *after* blur (`max(blur - threshold, 0)`), which acts as an acceptable soft bloom approximation rather than a strictly physical halation model.
 
 ## M11: Resolution & Export Management
-**Status**: READY FOR ARBITRATION
+**Status**: VERIFIED
 
 **Architecture**: (IMPLEMENTATION-DERIVED DOCUMENTATION)
 - Pipeline FBO dinamica (Source -> Ingest -> Preview -> Export).
@@ -194,3 +194,53 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 
 **Known limitations:**
 - N/A
+
+---
+
+# FORENSIC ROADMAP STATUS
+
+## 1. CATEGORIE
+
+### FATTO DOCUMENTALMENTE (VERIFIED)
+* **M4**: White Balance (Specifica originata, testata e approvata)
+* **M5**: Parametric Tone Mapping (Specifica originata, testata e approvata)
+* **M6**: Wheels ASC CDL (Codice dedotto, ma testato e portato a VERIFIED tramite audit forense)
+* **M7**: Saturation / Vibrance (Codice dedotto, ma testato e portato a VERIFIED tramite audit forense)
+* **M8**: 3D LUT Engine (Specifica originata, testata e approvata)
+* **M9**: Color Mix 8-Band (Specifica originata, testata e approvata)
+* **M10**: Real Effects (Specifica originata, testata e approvata)
+* **M11**: Resolution & Export Management (Specifica originata, testata e approvata)
+
+### DEDUCIBILE DAL CODICE MA NON SPECIFICATO
+* Tracce isolate di logica pre-esistente per l'input UI o per altre trasformazioni elementari. Probabilmente relative alle originarie M1, M2, M3 (es. scaffolding del DOM, import/export UI, rendering texture nativo) ma il vincolo contrattuale è assente.
+
+### NON RECUPERABILE
+* Il documento originale della **Roadmap delle 39 Milestone**.
+* Specifiche formali (requirements, architecture stages, acceptance criteria) per le milestone **M1-M3** e **M12-M39**.
+
+## 2. RISPOSTE AUDIT (A-H)
+
+**A. Quante milestone sono oggi VERIFIED?**
+Otto (8) milestone totali.
+
+**B. Quali sono esattamente?**
+M4, M5, M6, M7, M8, M9, M10, M11.
+
+**C. Quali sono IMPLEMENTED ma non VERIFIED?**
+Nessuna (Zero). M6 e M7 sono state promosse a VERIFIED tramite audit; M11 è passata a VERIFIED.
+
+**D. Quali sono UNKNOWN?**
+Tutte le restanti trentuno (31): M1, M2, M3 e dalla M12 alla M39.
+
+**E. È stata recuperata una roadmap originale completa o parziale?**
+No. Un'ispezione esaustiva di blob orfani (`git rev-list --objects`), dangling commits (`git fsck --lost-found`), storici completi (`git log --all`) e rami remoti ha confermato l'irreversibile assenza del documento della roadmap nel repository. La massima porzione recuperabile è limitata a deduzioni dal commit storico `735fba7` per M6/M7 e dai documenti pregressi in `MILESTONE_STATUS.md`. Non esistono tracce di M1-M3 e M12-M39.
+
+**F. Esiste una fonte attendibile che definisca M12?**
+No. Assolutamente inesistente nel database Git corrente.
+
+**G. Esistono nel repository elementi sufficienti per iniziare M12 senza inventare requisiti?**
+No. Qualsiasi implementazione autonoma di M12 richiederebbe un'allucinazione non verificabile dei requisiti.
+
+**H. Qual è l'unico prossimo passo corretto secondo le evidenze?**
+Richiedere all'Arbitratore/Utente il reintegro della documentazione mancante. Fino ad allora: **M12 BLOCKED: specification unavailable**.
+
