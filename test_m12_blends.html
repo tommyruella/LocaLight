@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head><title>M12 Blends Test</title></head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+window.runTest = async function() {
+    let results = [];
+    function log(name, pass) { results.push({ test: name, pass: pass }); }
+    const canvas = document.getElementById('c');
+    canvas.width = 4; canvas.height = 4;
+    const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
+    gl.getExtension('EXT_color_buffer_float');
+    const vs = `#version 300 es\n in vec2 a_position; void main() { gl_Position = vec4(a_position, 0.0, 1.0); }`;
+    const fs = `#version 300 es
+    precision highp float;
+    out vec4 outColor;
+    vec3 screen(vec3 b, vec3 l) { return b + l; }
+    vec3 overlay(vec3 b, vec3 l) { return b * (b + l) / (b + 0.18); }
+    void main() {
+        vec3 sc = screen(vec3(0.5), vec3(0.3));
+        vec3 ov1 = overlay(vec3(0.5), vec3(0.18));
+        vec3 ov2 = overlay(vec3(0.0), vec3(1.0));
+        vec3 ov3 = overlay(vec3(60000.0), vec3(60000.0));
+        outColor = vec4(
+            abs(sc.x - 0.8) < 0.001 ? 1.0 : 0.0,
+            abs(ov1.x - 0.5) < 0.001 ? 1.0 : 0.0,
+            ov2.x == 0.0 ? 1.0 : 0.0,
+            ov3.x > 0.0 && ov3.x < 130000.0 ? 1.0 : 0.0
+        );
+    }`;
+    const vShader = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vShader, vs); gl.compileShader(vShader);
+    const fShader = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fShader, fs); gl.compileShader(fShader);
+    const prog = gl.createProgram(); gl.attachShader(prog, vShader); gl.attachShader(prog, fShader); gl.linkProgram(prog);
+    const fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, 4, 0, gl.RGBA, gl.FLOAT, null);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    const posBuffer = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+    const posLoc = gl.getAttribLocation(prog, "a_position");
+    gl.enableVertexAttribArray(posLoc); gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+    gl.useProgram(prog); gl.drawArrays(gl.TRIANGLES, 0, 6);
+    const pixels = new Float32Array(4 * 4 * 4);
+    gl.readPixels(0, 0, 4, 4, gl.RGBA, gl.FLOAT, pixels);
+    
+    log("Screen = base + layer", pixels[0] === 1.0);
+    log("Overlay(base, 0.18) = base", pixels[1] === 1.0);
+    log("Overlay no div by zero", pixels[2] === 1.0);
+    log("Overlay near Float16 limit", pixels[3] === 1.0);
+    return results;
+}
+</script>
+</body>
+</html>

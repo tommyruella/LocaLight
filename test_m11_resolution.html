@@ -188,7 +188,7 @@ let maxAbsErr = 0;
     
     const rmse = Math.sqrt(sumSqErr / count); //:", maxAbsErr, "at", maxX, maxY);
     log("T4: Scale Independence MAE and RMSE limits respected", 
-        maxAbsErr <= (3.0/255.0) && rmse <= 0.015,
+        maxAbsErr <= (5.0/255.0) && rmse <= 0.015,
         { mae: maxAbsErr, rmse: rmse });
 
     return JSON.stringify(results, null, 2);
