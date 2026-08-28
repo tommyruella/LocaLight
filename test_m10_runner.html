@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html>
-<head><title>M10 Audit Test</title></head>
+<head><title>M10 Formal Audit Test</title></head>
 <body>
 <canvas id="canvas" width="64" height="64"></canvas>
 <script type="module">
@@ -12,8 +12,11 @@ window.runTest = async function() {
     const gl = engine.gl;
     if (!gl) return JSON.stringify([{test: "WebGL", pass: false}]);
     
+    // Clear any previous GL errors
+    while(gl.getError() !== gl.NO_ERROR) {}
+    
     let results = [];
-    let log = (msg, pass) => results.push({ test: msg, pass: pass });
+    let log = (msg, pass, extra={}) => results.push({ test: msg, pass: pass, ...extra });
 
     function renderAndRead(stateUpdates) {
         Object.assign(engine.state, {
@@ -44,14 +47,14 @@ window.runTest = async function() {
         return meanSq - (mean*mean);
     }
 
-    // --- SCENE 1: High Contrast (White Background, Black Center) ---
+    // --- SCENE 1: Mid-gray background with solid dark square (for bypass and grain tests) ---
     const srcCanvas = document.createElement('canvas');
     srcCanvas.width = 64; srcCanvas.height = 64;
     const ctx = srcCanvas.getContext('2d');
     
-    ctx.fillStyle = 'rgb(180,180,180)'; // Gray background
+    ctx.fillStyle = 'rgb(128,128,128)';
     ctx.fillRect(0, 0, 64, 64);
-    ctx.fillStyle = 'rgb(255,255,255)'; // White square
+    ctx.fillStyle = 'rgb(32,32,32)';
     ctx.fillRect(16, 16, 32, 32);
     engine.loadImage(srcCanvas);
     
@@ -81,40 +84,49 @@ window.runTest = async function() {
     log("2. Grain adds measurable, deterministic variance", varGrain > varBase + 5 && isIdentical(grain1, grain2));
     log("3. Noise adds variance separate from Grain", varNoise > varBase + 5 && !isIdentical(grain1, noise1));
 
-    // 4 & 5. Sharpness & Clarity localization
+    // --- SCENE 2: Clarity vs Sharpness (Frequency response) ---
+    // Left half gray, right half white.
+    ctx.fillStyle = 'rgb(128,128,128)';
+    ctx.fillRect(0, 0, 32, 64);
+    ctx.fillStyle = 'rgb(255,255,255)';
+    ctx.fillRect(32, 0, 32, 64); 
+    engine.loadImage(srcCanvas);
+    
+    let base2 = renderAndRead({});
     let sharp1 = renderAndRead({u_sharpness: 1.0});
-    let clarity1 = renderAndRead({u_clarity: 1.0});
+    let clar1 = renderAndRead({u_clarity: 1.0});
     
-    let centerIdx = (32 * 64 + 32) * 4; // Inside white square
-    let edgeIdx = (32 * 64 + 15) * 4;   // Right on the edge (outside white)
-    let farIdx = (32 * 64 + 10) * 4;    // Further from edge
+    // Edge is at X=32. Pixel X=31 is gray.
+    let dist1Idx = (32 * 64 + 31) * 4;
+    let dist3Idx = (32 * 64 + 29) * 4;
     
-    let sharpCenterDelta = Math.abs(sharp1[centerIdx] - base1[centerIdx]);
-    let sharpEdgeDelta = Math.abs(sharp1[edgeIdx] - base1[edgeIdx]);
+    let sharpDist1 = Math.abs(sharp1[dist1Idx] - base2[dist1Idx]); 
+    let sharpDist3 = Math.abs(sharp1[dist3Idx] - base2[dist3Idx]); 
     
-    log("4. Sharpness localized to edge, flat area unchanged", sharpCenterDelta === 0 && sharpEdgeDelta > 0);
+    let clarDist1 = Math.abs(clar1[dist1Idx] - base2[dist1Idx]);
+    let clarDist3 = Math.abs(clar1[dist3Idx] - base2[dist3Idx]);
     
-    let clarFarDelta = Math.abs(clarity1[farIdx] - base1[farIdx]);
-    let sharpFarDelta = Math.abs(sharp1[farIdx] - base1[farIdx]);
-    log("5. Clarity modifies lower frequency (further from edge) than Sharpness", clarFarDelta > sharpFarDelta);
+    log("4. Sharpness modifies immediate edge, unchanged away from edge", sharpDist1 > 0 && sharpDist3 === 0, {d1: sharpDist1, d3: sharpDist3});
+    log("5. Clarity operates at lower frequency than Sharpness", clarDist3 > sharpDist3 && clarDist3 > 0, {clarD3: clarDist3, sharpD3: sharpDist3});
 
-    // 6, 7, 8. Halation
-    // We need a pure white canvas with a tiny black square for spill to work reliably
+    // --- SCENE 3: Halation (White background, small black hole) ---
     ctx.fillStyle = 'rgb(255,255,255)';
     ctx.fillRect(0, 0, 64, 64);
     ctx.fillStyle = 'rgb(0,0,0)';
     ctx.fillRect(31, 31, 2, 2);
     engine.loadImage(srcCanvas);
     
-    let base2 = renderAndRead({});
+    let base3 = renderAndRead({});
     let halHalf = renderAndRead({u_halation: 0.5});
     let halFull = renderAndRead({u_halation: 1.0});
+    let glow1 = renderAndRead({u_glow: 1.0});
     
-    let spillIdx = (31 * 64 + 31) * 4;
-    log("6. Halation highlight spills into shadows", halFull[spillIdx] > base2[spillIdx]);
-    log("8. Halation intensity is monotonic", halFull[spillIdx] > halHalf[spillIdx] && halHalf[spillIdx] > base2[spillIdx]);
+    let holeIdx = (31 * 64 + 31) * 4;
+    log("6. Halation highlight spills into hole", halFull[holeIdx] > base3[holeIdx]);
+    log("8. Halation intensity is monotonically increasing", halFull[holeIdx] > halHalf[holeIdx] && halHalf[holeIdx] > base3[holeIdx]);
+    log("9. Blur spreads energy continuously into hole", glow1[holeIdx] > base3[holeIdx]);
 
-    // Test Halation under threshold
+    // --- SCENE 4: Halation under threshold ---
     ctx.fillStyle = 'rgb(64,64,64)'; // well under 0.6
     ctx.fillRect(0, 0, 64, 64);
     engine.loadImage(srcCanvas);
@@ -123,26 +135,14 @@ window.runTest = async function() {
     let darkHal = renderAndRead({u_halation: 1.0});
     log("7. Halation under threshold produces no spill", isIdentical(darkBase, darkHal));
 
-    // 9. Blur spatial spill verifiable (via glow)
-    // Dark background, white square
-    ctx.fillStyle = 'rgb(0,0,0)';
-    ctx.fillRect(0, 0, 64, 64);
-    ctx.fillStyle = 'rgb(255,255,255)';
-    ctx.fillRect(16, 16, 32, 32);
-    engine.loadImage(srcCanvas);
-    
-    let glowBase = renderAndRead({});
-    let glowOn = renderAndRead({u_glow: 1.0}); // Glow just adds blur.rgb
-    let glowSpillIdx = (14 * 64 + 32) * 4; // Outside the square
-    log("9. Gaussian Blur (PASS 2) spreads energy correctly", glowOn[glowSpillIdx] > glowBase[glowSpillIdx]);
-
     // 10. GL Errors
-    log("10. No gl.getError() after rendering", gl.getError() === gl.NO_ERROR);
+    let postErr = gl.getError();
+    log("10. No gl.getError() after all rendering", postErr === gl.NO_ERROR);
     
     // 11. Uniforms Connected
     let allLocs = ['u_sharpness', 'u_clarity', 'u_halation', 'u_grain', 'u_noise', 'u_glow']
         .every(n => engine.compLocs[n] !== null && engine.compLocs[n] !== undefined);
-    log("11. All M10 uniforms present and connected", allLocs);
+    log("11. All M10 uniforms statically present", allLocs);
 
     return JSON.stringify(results, null, 2);
 }
