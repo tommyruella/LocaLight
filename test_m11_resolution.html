@@ -175,17 +175,11 @@ let maxAbsErr = 0;
     for (let y = 20; y < 1004; y++) {
         for (let x = 20; x < 1004; x++) {
             const idx = (y * 1024 + x) * 4;
-            const rRef = pixels1024[idx] / 255.0;
-            const gRef = pixels1024[idx+1] / 255.0;
-            const bRef = pixels1024[idx+2] / 255.0;
-            const LRef = 0.299*rRef + 0.587*gRef + 0.114*bRef;
+            const dr = pixels1024[idx] - upscaled[idx];
+            const dg = pixels1024[idx+1] - upscaled[idx+1];
+            const db = pixels1024[idx+2] - upscaled[idx+2];
             
-            const rTst = upscaled[idx] / 255.0;
-            const gTst = upscaled[idx+1] / 255.0;
-            const bTst = upscaled[idx+2] / 255.0;
-            const LTst = 0.299*rTst + 0.587*gTst + 0.114*bTst;
-            
-            const diff = Math.abs(LRef - LTst);
+            const diff = Math.abs(0.299*dr + 0.587*dg + 0.114*db) / 255.0;
             if (diff > maxAbsErr) { maxAbsErr = diff; maxX = x; maxY = y; }
             sumSqErr += diff * diff;
             count++;
