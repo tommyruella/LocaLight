@@ -86,19 +86,20 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 ---
 
 ## MILESTONE 9: Color Mix 8-Band
-**Status:** PENDING
+**Status:** IMPLEMENTED (Pending Audit)
 
 **Architecture:**
-- Da definire.
+- Pipeline HSL a 8 bande interpolata fluida (smoothstep).
+- Si applica dopo la Tone Curve ma prima di Saturazione e Vibrance.
 
 **Required invariants:**
-- TBD
+- Spostare una banda (es. Red) non deve avere alcun impatto su una banda ortogonale e non adiacente (es. Blue).
 
 **Forbidden behavior:**
-- TBD
+- Salti bruschi di colore (banding) dovuti a interpolazione assente o errata tra i centri HSL.
 
 **Required tests:**
-- TBD
+- `test_m9_mix.js` (verifica formale dell'isolamento di banda e del blend bilineare).
 
 **Acceptance criteria:**
 - TBD
