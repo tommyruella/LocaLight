@@ -152,8 +152,8 @@ vec3 encodeSRGB(vec3 linear) {
         );
         // Correct Inverse of M_SRGB_TO_LMS
         const mat3 M_LMS_TO_SRGB = mat3(
-            2.538047, -0.146005, -0.042299,
-            -1.293278, 1.116649, -0.071607,
+            2.538045, -0.146004, -0.042299,
+            -1.293277, 1.116648, -0.071607,
             -0.040237, -0.022329, 1.022753
         );
         vec3 lms = M_SRGB_TO_LMS * color.rgb;

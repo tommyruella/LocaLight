@@ -1,4 +1,3 @@
-// test_wb.js
 function calculateWBScale(tempUI, tintUI) {
     if (tempUI === 0.0 && tintUI === 0.0) return [1.0, 1.0, 1.0];
 
@@ -105,6 +104,7 @@ function check(arr) {
 
 // 1. Identity
 let id = calculateWBScale(0.0, 0.0);
+console.log("identity (0,0):", id);
 assert(id[0] === 1.0 && id[1] === 1.0 && id[2] === 1.0, "Identity at 0,0 failed");
 
 // 2. Continuity around 0
@@ -130,3 +130,4 @@ console.log("tint_pos:", tint_pos);
 console.log("tint_neg:", tint_neg);
 
 console.log("PASS: White Balance M4");
+
