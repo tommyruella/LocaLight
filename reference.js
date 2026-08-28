@@ -87,7 +87,7 @@ class ColorReference {
         const T = 1000000.0 / mired;
         
         let uv0 = get_uv(T);
-        let uv1 = get_uv(T + 1.0);
+        let uv1 = get_uv(T + 0.1);
         let du = uv1[0] - uv0[0];
         let dv = uv1[1] - uv0[1];
         let len = Math.sqrt(du*du + dv*dv);

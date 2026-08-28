@@ -589,6 +589,7 @@ vec3 encodeSRGB(vec3 linear) {
         }
         
         let m = new Array(5).fill(0);
+        
         m[0] = delta[0];
         m[4] = delta[3];
         for (let i = 1; i < 4; i++) {
@@ -670,7 +671,7 @@ vec3 encodeSRGB(vec3 linear) {
         const T = 1000000.0 / mired;
         
         let uv0 = get_uv(T);
-        let uv1 = get_uv(T + 1.0);
+        let uv1 = get_uv(T + 0.1);
         let du = uv1[0] - uv0[0];
         let dv = uv1[1] - uv0[1];
         let len = Math.sqrt(du*du + dv*dv);
