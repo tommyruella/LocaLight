@@ -6,7 +6,7 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 ---
 
 ## MILESTONE 4: White Balance
-**Status:** IMPLEMENTED (Pending Audit on SHA `1d6f501`)
+**Status:** VERIFIED
 
 **Architecture:**
 - Trasformazione in Linear RGB via Matrice Bradford verso D65.
@@ -30,7 +30,7 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 ---
 
 ## MILESTONE 5: Parametric Tone Mapping
-**Status:** IMPLEMENTED (Pending Audit on SHA `1d6f501`)
+**Status:** VERIFIED
 
 **Architecture:**
 - Pipeline tonale isolata su canale di Luminanza (`L = dot(RGB, weights)`).
@@ -54,11 +54,12 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 
 **Known limitations:**
 - Richiede supporto WebGL2 `EXT_color_buffer_float` per i framebuffer `RGBA16F`.
+- Il test `test_spline.js` estrae `buildSpline` direttamente dall'engine via regex/eval per il testing, ma `evalSpline` rimane una trascrizione JS manuale della reale interpolazione GLSL. Se il codice GLSL cambia, questa trascrizione andrà aggiornata a mano.
 
 ---
 
 ## MILESTONE 8: 3D LUT Engine
-**Status:** IMPLEMENTED (Pending Audit on SHA `1d6f501`)
+**Status:** VERIFIED
 
 **Architecture:**
 - Voxel sampling 3D applicato esclusivamente in spazio display-referred (dopo `encodeSRGB`).
@@ -80,11 +81,12 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 
 **Known limitations:**
 - LUT non `[0,1]` attivano un warning in console.
+- L'intensità della LUT, pur essendo un uniform globale nello shader, viene estratta dallo stato del layer *attualmente selezionato* in UI (`activeLayerIndex`). Di conseguenza, cambiare il layer attivo modificherà l'intensità della LUT per tutta l'immagine. Questa è un'ambiguità architetturale voluta e non un bug.
 
 ---
 
 ## MILESTONE 9: Color Mix 8-Band
-**Status:** BLOCKED (In attesa di VERIFIED su M4, M5, M8)
+**Status:** PENDING
 
 **Architecture:**
 - Da definire.
