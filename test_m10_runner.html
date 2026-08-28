@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head><title>M10 Runtime Test</title></head>
+<body>
+<canvas id="canvas" width="64" height="64"></canvas>
+<script type="module">
+import { LocalLightEngine } from './engine.js';
+
+window.runTest = async function() {
+    const canvas = document.getElementById('canvas');
+    const engine = new LocalLightEngine(canvas);
+    const gl = engine.gl;
+    if (!gl) return "FAIL: No WebGL2";
+    
+    // We create a 64x64 canvas to have a reasonable blurFbo size (16x16)
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = 64;
+    srcCanvas.height = 64;
+    const ctx = srcCanvas.getContext('2d');
+    
+    // Fill with mid-gray to allow grain to show up (luma ~ 0.5)
+    ctx.fillStyle = 'rgb(180,180,180)';
+    ctx.fillRect(0, 0, 64, 64);
+    
+    // Add a pure white square in the center (size 32x32) to trigger halation > 0.6
+    ctx.fillStyle = 'white';
+    ctx.fillRect(16, 16, 32, 32);
+    
+    engine.loadImage(srcCanvas);
+    
+    let results = [];
+    
+    function readOutput() {
+        const pixels = new Uint8Array(64 * 64 * 4);
+        gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return pixels;
+    }
+    
+    // Default render (no effects)
+    engine.state['u_sharpness'] = 0;
+    engine.state['u_clarity'] = 0;
+    engine.state['u_halation'] = 0;
+    engine.state['u_grain'] = 0;
+    engine.render([]);
+    let basePixels = readOutput();
+    
+    // Test 1: Sharpness (+1.0)
+    engine.state['u_sharpness'] = 1.0;
+    engine.render([]);
+    let sharpPixels = readOutput();
+    
+    // Test 2: Halation (+1.0)
+    engine.state['u_sharpness'] = 0;
+    engine.state['u_halation'] = 1.0;
+    engine.render([]);
+    let halationPixels = readOutput();
+    
+    // Test 3: Grain (+1.0)
+    engine.state['u_halation'] = 0;
+    engine.state['u_grain'] = 1.0;
+    engine.render([]);
+    let grainPixels = readOutput();
+    
+    // Test 4: Clarity (+1.0)
+    engine.state['u_grain'] = 0;
+    engine.state['u_clarity'] = 1.0;
+    engine.render([]);
+    let clarityPixels = readOutput();
+    
+    // Evaluate results
+    
+    // 1. Grain
+    let diffGrain = false;
+    for (let i=0; i<grainPixels.length; i++) {
+        if (grainPixels[i] !== basePixels[i]) diffGrain = true;
+    }
+    results.push({ test: 'Grain adds variance', pass: diffGrain });
+    
+    // 2. Halation
+    // The pixel at (4,4) is black/gray in the original, but should receive bloom.
+    // Index = (4 * 64 + 4) * 4 = 1040 (this corresponds to (4,4), which is far enough to not be white but close enough for blur to bleed maybe?)
+    // Actually, let's just pick a pixel just outside the white box: (14, 32).
+    let cornerIdx = (32 * 64 + 14) * 4;
+    let cornerBase = basePixels[cornerIdx];
+    let cornerHalation = halationPixels[cornerIdx];
+    results.push({ test: 'Halation blooms into shadows', pass: cornerHalation > cornerBase, baseVal: cornerBase, halationVal: cornerHalation });
+    
+    // 3. Sharpness
+    // Pixel (15, 32) is gray, next to white. Should get darker.
+    let edgeIdx = (32 * 64 + 15) * 4;
+    let edgeBase = basePixels[edgeIdx];
+    let edgeSharp = sharpPixels[edgeIdx];
+    results.push({ test: 'Sharpness changes edges', pass: edgeSharp !== edgeBase, baseVal: edgeBase, sharpVal: edgeSharp });
+
+    // 4. Clarity
+    // Clarity uses a large blur, so pixel (12, 32) (a bit further from the edge) should also get darker.
+    let clarIdx = (32 * 64 + 12) * 4;
+    let clarBase = basePixels[clarIdx];
+    let clarVal = clarityPixels[clarIdx];
+    results.push({ test: 'Clarity alters contrast', pass: clarVal !== clarBase, baseVal: clarBase, clarVal: clarVal });
+
+    return JSON.stringify(results);
+}
+</script>
+</body>
+</html>
