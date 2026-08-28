@@ -14,6 +14,7 @@ Questo documento definisce il contratto operativo formale per lo sviluppo, la ve
 - **Limiti:** 
   - NON modificano mai il repository.
   - NON introducono cambi architetturali nuovi senza aggiornare la specifica.
+  - **I test permanenti devono leggere il file sorgente reale a runtime (`fs.readFileSync` o equivalente)**, non contenere una copia manuale del codice da verificare.
   - NON "correggono mentalmente" il codice. Se il codice è formalmente corretto rispetto alla specifica, è `PASS`. Se viola la matematica, anche se produce un risultato "bello", è `FAIL`.
   - Non avendo accesso diretto al terminale/GPU, si basano sull'output testuale letterale incollato dal Coder. Per il comportamento visivo, il verdetto resta `N/A` a meno che non sia fornito uno screenshot o validato dall'umano.
 

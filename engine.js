@@ -383,7 +383,9 @@ vec3 encodeSRGB(vec3 linear) {
         
         this.dummyLut = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_3D, this.dummyLut);
-        gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, 1, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+        const dummyData = new Float32Array([1.0, 1.0, 1.0, 1.0]);
+        // dummyLut as RGBA16F to match lutTexture format
+        gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, 1, 1, 1, 0, gl.RGBA, gl.FLOAT, dummyData);
         gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     }
 
