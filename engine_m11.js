@@ -12,10 +12,6 @@ export class LocalLightEngine {
         this.baseFbo = null;
         this.blurTexture = null;
         this.blurFbo = null;
-        this.haloExtTexture = null;
-        this.haloExtFbo = null;
-        this.haloBlurTexture = null;
-        this.haloBlurFbo = null;
         this.lutTexture = null;
         
         this.uniformLocations = {};
@@ -70,7 +66,6 @@ export class LocalLightEngine {
             colorBufferFloat: gl.getExtension('EXT_color_buffer_float'),
             textureHalfFloatLinear: gl.getExtension('OES_texture_half_float_linear') || gl.getExtension('OES_texture_float_linear'),
         };
-        
         console.log("[LocalLightEngine] Capabilities:", this.caps);
     }
 
@@ -109,7 +104,6 @@ vec3 encodeSRGB(vec3 linear) {
 
         const fsBaseSource = `#version 300 es
     precision highp float;
-    ${GLSL_COLOR_SPACE}
     in vec2 v_texCoord;
     uniform sampler2D u_image;
     out vec4 outColor;
@@ -117,7 +111,6 @@ vec3 encodeSRGB(vec3 linear) {
     uniform float u_exposure;
     uniform vec3 u_wb_scale;
     uniform int u_is_srgb_input;
-    uniform int u_pipelineVersion;
     
     uniform float u_spline_x[5];
     uniform float u_spline_y[5];
@@ -178,34 +171,6 @@ vec3 encodeSRGB(vec3 linear) {
         }
     }
 
-    
-    float getHue(vec3 c) {
-        float cMax = max(c.r, max(c.g, c.b));
-        float cMin = min(c.r, min(c.g, c.b));
-        float delta = cMax - cMin;
-        if (delta == 0.0) return 0.0;
-        float h = 0.0;
-        if (cMax == c.r) {
-            h = (c.g - c.b) / delta + (c.g < c.b ? 6.0 : 0.0);
-        } else if (cMax == c.g) {
-            h = (c.b - c.r) / delta + 2.0;
-        } else {
-            h = (c.r - c.g) / delta + 4.0;
-        }
-        return h / 6.0;
-    }
-
-    mat3 axisRotation(vec3 axis, float angle) {
-        float s = sin(angle);
-        float c = cos(angle);
-        float oc = 1.0 - c;
-        return mat3(
-            oc * axis.x * axis.x + c,           oc * axis.x * axis.y - axis.z * s,  oc * axis.z * axis.x + axis.y * s,
-            oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,
-            oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c
-        );
-    }
-
     float evalSpline(float x_val) {
         if (x_val <= u_spline_x[0]) {
             return u_spline_y[0] + u_spline_m[0] * (x_val - u_spline_x[0]);
@@ -236,7 +201,11 @@ vec3 encodeSRGB(vec3 linear) {
         vec4 color = texture(u_image, vec2(v_texCoord.x, 1.0 - v_texCoord.y));
         
         if (u_is_srgb_input == 1) {
-            color.rgb = linearizeSRGB(color.rgb);
+            vec3 srgb = color.rgb;
+            bvec3 cutoff = lessThanEqual(srgb, vec3(0.04045));
+            vec3 higher = pow((srgb + vec3(0.055)) / vec3(1.055), vec3(2.4));
+            vec3 lower = srgb / vec3(12.92);
+            color.rgb = mix(higher, lower, cutoff);
         }
 
                 const mat3 M_SRGB_TO_LMS = mat3(
@@ -270,8 +239,9 @@ vec3 encodeSRGB(vec3 linear) {
         float scale = l_out / safe_l_in;
         color.rgb *= scale;
         
-        // --- 8-Band Color Mix (Scene Linear) ---
-        float h = getHue(color.rgb);
+        // --- 8-Band Color Mix (HSL) ---
+        vec3 hsl = rgb2hsl(color.rgb);
+        float h = hsl.x; // [0, 1]
         
         float centers[8];
         centers[0] = 0.0;         // Red
@@ -293,20 +263,20 @@ vec3 encodeSRGB(vec3 linear) {
             }
         }
         
-        float d1, range_h;
+        float d1, range;
         if (idx1 == 7) {
-            range_h = 1.0 - centers[7];
+            range = 1.0 - centers[7];
             if (h >= centers[7]) {
                 d1 = h - centers[7];
             } else {
                 d1 = h + (1.0 - centers[7]);
             }
         } else {
-            range_h = centers[idx2] - centers[idx1];
+            range = centers[idx2] - centers[idx1];
             d1 = h - centers[idx1];
         }
         
-        float t = d1 / range_h;
+        float t = d1 / range;
         t = smoothstep(0.0, 1.0, t);
         
         float w1 = 1.0 - t;
@@ -316,38 +286,11 @@ vec3 encodeSRGB(vec3 linear) {
         float shift_s = w1 * u_hsl_shifts[idx1*3+1] + w2 * u_hsl_shifts[idx2*3+1];
         float shift_l = w1 * u_hsl_shifts[idx1*3+2] + w2 * u_hsl_shifts[idx2*3+2];
         
-        // Apply shifts in RGB
-        if (u_pipelineVersion == 1) {
-            // Legacy M11 HSL Mix (Clips HDR)
-            vec3 hsl = rgb2hsl(color.rgb);
-            hsl.x = fract(hsl.x + shift_h * 0.125 + 1.0);
-            hsl.y = clamp(hsl.y + shift_s, 0.0, 1.0);
-            hsl.z = clamp(hsl.z + shift_l, 0.0, 1.0);
-            color.rgb = hsl2rgb(hsl);
-        } else {
-            // M12 Linear Mix (HDR safe)
-            if (shift_h != 0.0) {
-                mat3 rot = axisRotation(normalize(vec3(1.0, 1.0, 1.0)), shift_h * 3.14159);
-                color.rgb = rot * color.rgb;
-            }
-            if (shift_s != 0.0) {
-                float curLuma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
-                color.rgb = mix(vec3(curLuma), color.rgb, max(1.0 + shift_s, 0.0));
-            }
-            if (shift_l != 0.0) {
-                color.rgb *= exp2(shift_l);
-            }
-        }
-        // 2. Saturation
-        if (shift_s != 0.0) {
-            float curLuma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
-            color.rgb = mix(vec3(curLuma), color.rgb, max(1.0 + shift_s, 0.0));
-        }
-        // 3. Lightness
-        if (shift_l != 0.0) {
-            color.rgb *= exp2(shift_l);
-        }
-
+        hsl.x = fract(hsl.x + shift_h * 0.125 + 1.0);
+        hsl.y = clamp(hsl.y + shift_s, 0.0, 1.0);
+        hsl.z = clamp(hsl.z + shift_l, 0.0, 1.0);
+        
+        color.rgb = hsl2rgb(hsl);
         
         // --- Saturation & Vibrance ---
         float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
@@ -367,27 +310,10 @@ vec3 encodeSRGB(vec3 linear) {
     }
 `;
 
-        
-        const fsHaloExtSource = `#version 300 es
-        precision highp float;
-        in vec2 v_texCoord;
-        uniform sampler2D u_image;
-        uniform int u_pipelineVersion;
-        out vec4 outColor;
-        
-        void main() {
-            vec4 color = texture(u_image, v_texCoord);
-            float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
-            float threshold = 0.8;
-            float mask = max(luma - threshold, 0.0);
-            outColor = vec4(color.rgb * mask, 1.0);
-        }`;
-
         const fsBlurSource = `#version 300 es
         precision mediump float;
         in vec2 v_texCoord;
         uniform sampler2D u_image;
-        uniform int u_pipelineVersion;
         uniform vec2 u_texelSize;
         uniform float u_spatialScale;
         out vec4 outColor;
@@ -416,7 +342,6 @@ vec3 encodeSRGB(vec3 linear) {
         in vec2 v_texCoord;
         uniform sampler2D u_baseImage;
         uniform sampler2D u_blurImage;
-        uniform sampler2D u_haloBlurImage;
         uniform vec2 u_texelSize;
         uniform float u_spatialScale;
         
@@ -429,46 +354,43 @@ vec3 encodeSRGB(vec3 linear) {
         
         out vec4 outColor;
         
-        float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-        uniform int u_pipelineVersion;
+        float hash(vec2 p) {
+            return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+        }
         
         void main() {
             vec4 base = texture(u_baseImage, v_texCoord);
             vec4 blur = texture(u_blurImage, v_texCoord);
             
-                        
-            if (u_pipelineVersion == 1) {
-                if (u_sharpness != 0.0) {
-                    vec3 n = texture(u_baseImage, v_texCoord + vec2(0.0, u_texelSize.y * u_spatialScale)).rgb;
-                    vec3 s = texture(u_baseImage, v_texCoord + vec2(0.0, -u_texelSize.y * u_spatialScale)).rgb;
-                    vec3 e = texture(u_baseImage, v_texCoord + vec2(u_texelSize.x * u_spatialScale, 0.0)).rgb;
-                    vec3 w = texture(u_baseImage, v_texCoord + vec2(-u_texelSize.x * u_spatialScale, 0.0)).rgb;
-                    vec3 sharpBlur = (n + s + e + w) * 0.25;
-                    base.rgb += u_sharpness * (base.rgb - sharpBlur);
-                }
+            if (u_sharpness != 0.0) {
+                vec3 n = texture(u_baseImage, v_texCoord + vec2(0.0, u_texelSize.y * u_spatialScale)).rgb;
+                vec3 s = texture(u_baseImage, v_texCoord + vec2(0.0, -u_texelSize.y * u_spatialScale)).rgb;
+                vec3 e = texture(u_baseImage, v_texCoord + vec2(u_texelSize.x * u_spatialScale, 0.0)).rgb;
+                vec3 w = texture(u_baseImage, v_texCoord + vec2(-u_texelSize.x * u_spatialScale, 0.0)).rgb;
+                vec3 sharpBlur = (n + s + e + w) * 0.25;
+                base.rgb += u_sharpness * (base.rgb - sharpBlur);
             }
+            
             if (u_clarity != 0.0) {
                 base.rgb += u_clarity * (base.rgb - blur.rgb);
             }
             
             if (u_halation > 0.0) {
-                vec3 halo = texture(u_haloBlurImage, v_texCoord).rgb;
-                base.rgb += u_halation * halo * 2.0;
+                vec3 bloom = max(blur.rgb - 0.6, 0.0);
+                base.rgb += u_halation * bloom * 2.0;
             }
             
             if (u_glow > 0.0) {
                 base.rgb += u_glow * blur.rgb;
             }
-            if (u_pipelineVersion == 1) {
-                if (u_grain > 0.0) {
-                    float luma = dot(base.rgb, vec3(0.2126, 0.7152, 0.0722));
-                    float weight = 1.0 - abs(luma - 0.5) * 2.0;
-                    float noiseVal = (hash(v_texCoord * 133.7) - 0.5) * 2.0;
-                    base.rgb += u_grain * noiseVal * weight * 0.15;
-                }
+            
+            if (u_grain > 0.0) {
+                float luma = dot(base.rgb, vec3(0.2126, 0.7152, 0.0722));
+                float weight = 1.0 - abs(luma - 0.5) * 2.0; 
+                float noiseVal = (hash(v_texCoord * 133.7) - 0.5) * 2.0;
+                base.rgb += u_grain * noiseVal * weight * 0.15;
             }
             
-                        
             if (u_noise > 0.0) {
                 float noiseVal = (hash(v_texCoord * 42.0) - 0.5) * 2.0;
                 base.rgb += u_noise * noiseVal * 0.1;
@@ -486,7 +408,6 @@ vec3 encodeSRGB(vec3 linear) {
         uniform sampler2D u_layer;
         uniform float u_opacity;
         uniform int u_blendMode;
-        uniform int u_pipelineVersion;
         
         void main() {
             vec3 base = texture(u_base, v_texCoord).rgb;
@@ -497,23 +418,14 @@ vec3 encodeSRGB(vec3 linear) {
                 blended = layer;
             } else if (u_blendMode == 1) { // Multiply
                 blended = base * layer;
-            } else if (u_blendMode == 2) {
-                if (u_pipelineVersion == 1) {
-                    blended = 1.0 - (1.0 - base) * (1.0 - layer);
-                } else {
-                    blended = base + layer; // M12 Additive
-                }
-            } else if (u_blendMode == 3) {
-                if (u_pipelineVersion == 1) {
-                    // M11 Overlay
-                    blended = vec3(
-                        base.r < 0.5 ? (2.0 * base.r * layer.r) : (1.0 - 2.0 * (1.0 - base.r) * (1.0 - layer.r)),
-                        base.g < 0.5 ? (2.0 * base.g * layer.g) : (1.0 - 2.0 * (1.0 - base.g) * (1.0 - layer.g)),
-                        base.b < 0.5 ? (2.0 * base.b * layer.b) : (1.0 - 2.0 * (1.0 - base.b) * (1.0 - layer.b))
-                    );
-                } else {
-                    blended = base * (base + layer) / (base + 0.18); // M12 Linear HDR
-                }
+            } else if (u_blendMode == 2) { // Screen
+                blended = 1.0 - (1.0 - base) * (1.0 - layer);
+            } else if (u_blendMode == 3) { // Overlay
+                blended = vec3(
+                    base.r < 0.5 ? (2.0 * base.r * layer.r) : (1.0 - 2.0 * (1.0 - base.r) * (1.0 - layer.r)),
+                    base.g < 0.5 ? (2.0 * base.g * layer.g) : (1.0 - 2.0 * (1.0 - base.g) * (1.0 - layer.g)),
+                    base.b < 0.5 ? (2.0 * base.b * layer.b) : (1.0 - 2.0 * (1.0 - base.b) * (1.0 - layer.b))
+                );
             }
             
             outColor = vec4(mix(base, blended, u_opacity), 1.0);
@@ -524,12 +436,6 @@ vec3 encodeSRGB(vec3 linear) {
         in vec2 v_texCoord;
         
         uniform sampler2D u_image;
-        uniform float u_sharpness;
-        uniform float u_grain;
-        uniform vec2 u_texelSize;
-        uniform float u_spatialScale;
-        float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-        uniform int u_pipelineVersion;
         
         // 3D LUT
         uniform highp sampler3D u_lut;
@@ -540,70 +446,15 @@ vec3 encodeSRGB(vec3 linear) {
         
         ${GLSL_COLOR_SPACE}
 
-        vec3 PBRNeutralToneMapping(vec3 color) {
-            const float startCompression = 0.8 - 0.04;
-            const float desaturation = 0.15;
-            vec3 c = max(color, vec3(0.0));
-            float x = min(c.r, min(c.g, c.b));
-            float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
-            c -= offset;
-            float peak = max(c.r, max(c.g, c.b));
-            if (peak < startCompression) return c;
-            const float d = 1.0 - startCompression;
-            float newPeak = 1.0 - d * d / (peak + d - startCompression);
-            c *= newPeak / peak;
-            float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
-            return mix(c, newPeak * vec3(1, 1, 1), g);
-        }
-
         void main() {
             vec3 color = texture(u_image, v_texCoord).rgb;
             
-            // Khronos PBR Neutral Tone Mapper (M12)
-            vec3 c = color;
-            if (u_pipelineVersion == 1) {
-                c = clamp(c, 0.0, 1.0);
-            } else {
-                c = PBRNeutralToneMapping(c);
-            }
-            
-            // Display Effects (Sharpness after Tone Mapping)
-            if (u_sharpness != 0.0 && u_pipelineVersion != 1) {
-                vec3 n, s, e, w;
-                if (u_pipelineVersion == 1) {
-                    n = clamp(texture(u_image, v_texCoord + vec2(0.0, u_texelSize.y * u_spatialScale)).rgb, 0.0, 1.0);
-                    s = clamp(texture(u_image, v_texCoord + vec2(0.0, -u_texelSize.y * u_spatialScale)).rgb, 0.0, 1.0);
-                    e = clamp(texture(u_image, v_texCoord + vec2(u_texelSize.x * u_spatialScale, 0.0)).rgb, 0.0, 1.0);
-                    w = clamp(texture(u_image, v_texCoord + vec2(-u_texelSize.x * u_spatialScale, 0.0)).rgb, 0.0, 1.0);
-                } else {
-                    n = PBRNeutralToneMapping(texture(u_image, v_texCoord + vec2(0.0, u_texelSize.y * u_spatialScale)).rgb);
-                    s = PBRNeutralToneMapping(texture(u_image, v_texCoord + vec2(0.0, -u_texelSize.y * u_spatialScale)).rgb);
-                    e = PBRNeutralToneMapping(texture(u_image, v_texCoord + vec2(u_texelSize.x * u_spatialScale, 0.0)).rgb);
-                    w = PBRNeutralToneMapping(texture(u_image, v_texCoord + vec2(-u_texelSize.x * u_spatialScale, 0.0)).rgb);
-                }
-                vec3 sharpBlur = (n + s + e + w) * 0.25;
-                c += u_sharpness * (c - sharpBlur);
-            }
-
+            // Provisional Display Transform
+            vec3 c = max(vec3(0.0), color);
+            c = clamp(c, 0.0, 1.0);
             
             // Output Encoding (Linear -> sRGB)
             vec3 encoded = encodeSRGB(c);
-            
-            // Post-sRGB Effects (Grain)
-            if (u_grain > 0.0 && u_pipelineVersion != 1) {
-                float luma = dot(encoded, vec3(0.2126, 0.7152, 0.0722));
-                float weight = 1.0 - abs(luma - 0.5) * 2.0; 
-                float noiseVal = (hash(v_texCoord * 133.7) - 0.5) * 2.0;
-                encoded += u_grain * noiseVal * weight * 0.15;
-            }
-
-            if (u_grain > 0.0 && u_pipelineVersion != 1) {
-                float luma = dot(encoded, vec3(0.2126, 0.7152, 0.0722));
-                float weight = 1.0 - abs(luma - 0.5) * 2.0; 
-                float noiseVal = (hash(v_texCoord * 133.7) - 0.5) * 2.0;
-                encoded += u_grain * noiseVal * weight * 0.15;
-            }
-
             
             // --- 3D LUT in Display-Referred Space ---
             // Scale coords to sample voxel centers and avoid edge bleeding
@@ -617,14 +468,12 @@ vec3 encodeSRGB(vec3 linear) {
 
         const vertexShader = this.compileShader(gl.VERTEX_SHADER, vsSource);
         const baseShader = this.compileShader(gl.FRAGMENT_SHADER, fsBaseSource);
-        const haloExtShader = this.compileShader(gl.FRAGMENT_SHADER, fsHaloExtSource);
         const blurShader = this.compileShader(gl.FRAGMENT_SHADER, fsBlurSource);
         const compositeShader = this.compileShader(gl.FRAGMENT_SHADER, fsCompositeSource);
         const blendShader = this.compileShader(gl.FRAGMENT_SHADER, fsBlendSource);
         const outputShader = this.compileShader(gl.FRAGMENT_SHADER, fsOutputSource);
 
         this.baseProgram = this.createProgram(vertexShader, baseShader);
-        this.haloExtProgram = this.createProgram(vertexShader, haloExtShader);
         this.blurProgram = this.createProgram(vertexShader, blurShader);
         this.compositeProgram = this.createProgram(vertexShader, compositeShader);
         this.blendProgram = this.createProgram(vertexShader, blendShader);
@@ -637,34 +486,23 @@ vec3 encodeSRGB(vec3 linear) {
         this.blendLocs['u_layer'] = gl.getUniformLocation(this.blendProgram, 'u_layer');
         this.blendLocs['u_opacity'] = gl.getUniformLocation(this.blendProgram, 'u_opacity');
         this.blendLocs['u_blendMode'] = gl.getUniformLocation(this.blendProgram, 'u_blendMode');
-        this.blendLocs['u_pipelineVersion'] = gl.getUniformLocation(this.blendProgram, 'u_pipelineVersion');
 
         // Uniforms for Output Pass
         this.outputLocs = {};
         gl.useProgram(this.outputProgram);
         this.outputLocs['u_image'] = gl.getUniformLocation(this.outputProgram, 'u_image');
-        this.outputLocs['u_pipelineVersion'] = gl.getUniformLocation(this.outputProgram, 'u_pipelineVersion');
         this.outputLocs['u_lut'] = gl.getUniformLocation(this.outputProgram, 'u_lut');
         this.outputLocs['u_lut_intensity'] = gl.getUniformLocation(this.outputProgram, 'u_lut_intensity');
         this.outputLocs['u_lut_size'] = gl.getUniformLocation(this.outputProgram, 'u_lut_size');
-        this.outputLocs['u_sharpness'] = gl.getUniformLocation(this.outputProgram, 'u_sharpness');
-        this.outputLocs['u_grain'] = gl.getUniformLocation(this.outputProgram, 'u_grain');
-        this.outputLocs['u_texelSize'] = gl.getUniformLocation(this.outputProgram, 'u_texelSize');
-        this.outputLocs['u_spatialScale'] = gl.getUniformLocation(this.outputProgram, 'u_spatialScale');
         this.outputLocs['u_lut'] = gl.getUniformLocation(this.outputProgram, 'u_lut');
         this.outputLocs['u_lut_intensity'] = gl.getUniformLocation(this.outputProgram, 'u_lut_intensity');
         this.outputLocs['u_lut_size'] = gl.getUniformLocation(this.outputProgram, 'u_lut_size');
-        this.outputLocs['u_sharpness'] = gl.getUniformLocation(this.outputProgram, 'u_sharpness');
-        this.outputLocs['u_grain'] = gl.getUniformLocation(this.outputProgram, 'u_grain');
-        this.outputLocs['u_texelSize'] = gl.getUniformLocation(this.outputProgram, 'u_texelSize');
-        this.outputLocs['u_spatialScale'] = gl.getUniformLocation(this.outputProgram, 'u_spatialScale');
 
         // Uniforms for Base Pass
         this.baseLocs = {};
         gl.useProgram(this.baseProgram);
         this.baseLocs['u_image'] = gl.getUniformLocation(this.baseProgram, 'u_image');
         this.baseLocs['u_is_srgb_input'] = gl.getUniformLocation(this.baseProgram, 'u_is_srgb_input');
-        this.baseLocs['u_pipelineVersion'] = gl.getUniformLocation(this.baseProgram, 'u_pipelineVersion');
         this.baseLocs['u_exposure'] = gl.getUniformLocation(this.baseProgram, 'u_exposure');
         this.baseLocs['u_wb_scale'] = gl.getUniformLocation(this.baseProgram, 'u_wb_scale');
 
@@ -685,29 +523,20 @@ vec3 encodeSRGB(vec3 linear) {
         this.blurLocs['u_image'] = gl.getUniformLocation(this.blurProgram, 'u_image');
         this.blurLocs['u_texelSize'] = gl.getUniformLocation(this.blurProgram, 'u_texelSize');
         this.blurLocs['u_spatialScale'] = gl.getUniformLocation(this.blurProgram, 'u_spatialScale');
-        
-        this.haloExtLocs = {};
-        gl.useProgram(this.haloExtProgram);
-        this.haloExtLocs['u_image'] = gl.getUniformLocation(this.haloExtProgram, 'u_image');
-
 
         // Uniforms for Composite Pass
         this.compLocs = {};
         gl.useProgram(this.compositeProgram);
         this.compLocs['u_baseImage'] = gl.getUniformLocation(this.compositeProgram, 'u_baseImage');
         this.compLocs['u_blurImage'] = gl.getUniformLocation(this.compositeProgram, 'u_blurImage');
-        this.compLocs['u_haloBlurImage'] = gl.getUniformLocation(this.compositeProgram, 'u_haloBlurImage');
         this.compLocs['u_texelSize'] = gl.getUniformLocation(this.compositeProgram, 'u_texelSize');
         this.compLocs['u_spatialScale'] = gl.getUniformLocation(this.compositeProgram, 'u_spatialScale');
-        this.compLocs['u_pipelineVersion'] = gl.getUniformLocation(this.compositeProgram, 'u_pipelineVersion');
         this.compLocs['u_sharpness'] = gl.getUniformLocation(this.compositeProgram, 'u_sharpness');
         this.compLocs['u_clarity'] = gl.getUniformLocation(this.compositeProgram, 'u_clarity');
         this.compLocs['u_halation'] = gl.getUniformLocation(this.compositeProgram, 'u_halation');
         this.compLocs['u_grain'] = gl.getUniformLocation(this.compositeProgram, 'u_grain');
         this.compLocs['u_noise'] = gl.getUniformLocation(this.compositeProgram, 'u_noise');
         this.compLocs['u_glow'] = gl.getUniformLocation(this.compositeProgram, 'u_glow');
-        this.compLocs['u_sharpness'] = gl.getUniformLocation(this.compositeProgram, 'u_sharpness');
-        this.compLocs['u_grain'] = gl.getUniformLocation(this.compositeProgram, 'u_grain');
     }
 
     compileShader(type, source) {
@@ -829,7 +658,6 @@ vec3 encodeSRGB(vec3 linear) {
         if (this.baseTexture) gl.deleteTexture(this.baseTexture);
         if (this.baseFbo) gl.deleteFramebuffer(this.baseFbo);
         const base = this.createFboAndTexture(baseW, baseH, true);
-        this.pipelineFloatPrecision = base.isFloat ? 16 : 8;
         this.baseTexture = base.tex;
         this.baseFbo = base.fbo;
 
@@ -838,18 +666,6 @@ vec3 encodeSRGB(vec3 linear) {
         const blur = this.createFboAndTexture(blurW, blurH, true);
         this.blurTexture = blur.tex;
         this.blurFbo = blur.fbo;
-        
-        if (this.haloExtTexture) gl.deleteTexture(this.haloExtTexture);
-        if (this.haloExtFbo) gl.deleteFramebuffer(this.haloExtFbo);
-        const hext = this.createFboAndTexture(blurW, blurH, true);
-        this.haloExtTexture = hext.tex;
-        this.haloExtFbo = hext.fbo;
-        
-        if (this.haloBlurTexture) gl.deleteTexture(this.haloBlurTexture);
-        if (this.haloBlurFbo) gl.deleteFramebuffer(this.haloBlurFbo);
-        const hblur = this.createFboAndTexture(blurW, blurH, true);
-        this.haloBlurTexture = hblur.tex;
-        this.haloBlurFbo = hblur.fbo;
 
         if (this.layerTexture) gl.deleteTexture(this.layerTexture);
         if (this.layerFbo) gl.deleteFramebuffer(this.layerFbo);
@@ -1238,7 +1054,6 @@ vec3 encodeSRGB(vec3 linear) {
         
         const isSrgbInput = (inputTexture === this.originalTexture) || !inputTexture;
         gl.uniform1i(this.baseLocs['u_is_srgb_input'], isSrgbInput ? 1 : 0);
-        gl.uniform1i(this.baseLocs['u_pipelineVersion'], this.pipelineVersion || 2);
         
         const expVal = this.bypassed ? 0.0 : (state['u_exposure'] !== undefined ? state['u_exposure'] : (this.state['u_exposure'] || 0.0));
         gl.uniform1f(this.baseLocs['u_exposure'], expVal);
@@ -1289,30 +1104,7 @@ vec3 encodeSRGB(vec3 linear) {
         gl.uniform1f(this.blurLocs['u_spatialScale'], spatialScale);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-        // PASS 2b: Halation Extractor
-        gl.useProgram(this.haloExtProgram);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.haloExtFbo); this.checkFBO();
-        gl.viewport(0, 0, this.blurW, this.blurH);
-        this.bindQuad(this.haloExtProgram);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, this.baseTexture);
-        gl.uniform1i(this.haloExtLocs['u_image'], 0);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-        
-        // PASS 2c: Halation Blur
-        gl.useProgram(this.blurProgram);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.haloBlurFbo); this.checkFBO();
-        gl.viewport(0, 0, this.blurW, this.blurH);
-        this.bindQuad(this.blurProgram);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, this.haloExtTexture);
-        gl.uniform1i(this.blurLocs['u_image'], 0);
-        gl.uniform2f(this.blurLocs['u_texelSize'], 1.0 / this.blurW, 1.0 / this.blurH);
-        gl.uniform1f(this.blurLocs['u_spatialScale'], spatialScale * 2.0); // Halation is usually a broader blur
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-
         // PASS 3: Composite (M10 Effects)
-
         gl.useProgram(this.compositeProgram);
         gl.bindFramebuffer(gl.FRAMEBUFFER, targetFbo);
         gl.viewport(0, 0, targetW, targetH);
@@ -1325,13 +1117,9 @@ vec3 encodeSRGB(vec3 linear) {
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, this.blurTexture);
         gl.uniform1i(this.compLocs['u_blurImage'], 1);
-        gl.activeTexture(gl.TEXTURE2);
-        gl.bindTexture(gl.TEXTURE_2D, this.haloBlurTexture);
-        gl.uniform1i(this.compLocs['u_haloBlurImage'], 2);
         
         gl.uniform2f(this.compLocs['u_texelSize'], 1.0 / targetW, 1.0 / targetH);
         gl.uniform1f(this.compLocs['u_spatialScale'], spatialScale);
-            gl.uniform1i(this.compLocs['u_pipelineVersion'], this.pipelineVersion || 2);
         
         const safeVal = (name) => this.bypassed ? 0.0 : (state[name] !== undefined ? state[name] : (this.state[name] || 0.0));
         
@@ -1341,8 +1129,6 @@ vec3 encodeSRGB(vec3 linear) {
         gl.uniform1f(this.compLocs['u_grain'], safeVal('u_grain'));
         gl.uniform1f(this.compLocs['u_noise'], safeVal('u_noise'));
         gl.uniform1f(this.compLocs['u_glow'], safeVal('u_glow'));
-            gl.uniform1f(this.compLocs['u_sharpness'], safeVal('u_sharpness'));
-            gl.uniform1f(this.compLocs['u_grain'], safeVal('u_grain'));
         
         gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
@@ -1380,26 +1166,8 @@ vec3 encodeSRGB(vec3 linear) {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_3D, this.lutTexture || this.dummyLut);
             gl.uniform1i(this.outputLocs['u_lut'], 1);
-            const pipelineVersion = this.pipelineVersion || 2;
-            gl.uniform1i(this.outputLocs['u_pipelineVersion'], pipelineVersion);
             gl.uniform1f(this.outputLocs['u_lut_intensity'], 0.0);
             gl.uniform1f(this.outputLocs['u_lut_size'], this.lutSize || 1.0);
-            let globalSharpness = 0.0;
-            let globalGrain = 0.0;
-            if (layersArray && layersArray.length > 0) {
-                const active = layersArray.find(l => l.active) || layersArray[0];
-                if (active.engineState) {
-                    globalSharpness = active.engineState['u_sharpness'] || 0.0;
-                    globalGrain = active.engineState['u_grain'] || 0.0;
-                }
-            } else if (!this.bypassed) {
-                globalSharpness = this.state['u_sharpness'] || 0.0;
-                globalGrain = this.state['u_grain'] || 0.0;
-            }
-            gl.uniform1f(this.outputLocs['u_sharpness'], globalSharpness);
-            gl.uniform1f(this.outputLocs['u_grain'], globalGrain);
-            gl.uniform2f(this.outputLocs['u_texelSize'], 1.0 / targetW, 1.0 / targetH);
-            gl.uniform1f(this.outputLocs['u_spatialScale'], spatialScale);
             
             gl.drawArrays(gl.TRIANGLES, 0, 6);
             return;
@@ -1445,7 +1213,6 @@ vec3 encodeSRGB(vec3 linear) {
                 else if (layer.blendMode === 'screen') mode = 2;
                 else if (layer.blendMode === 'overlay') mode = 3;
                 gl.uniform1i(this.blendLocs['u_blendMode'], mode);
-                gl.uniform1i(this.blendLocs['u_pipelineVersion'], this.pipelineVersion || 2);
                 
                 gl.drawArrays(gl.TRIANGLES, 0, 6);
                 
@@ -1479,8 +1246,6 @@ vec3 encodeSRGB(vec3 linear) {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_3D, this.lutTexture || this.dummyLut);
             gl.uniform1i(this.outputLocs['u_lut'], 1);
-            const pipelineVersion = this.pipelineVersion || 2;
-            gl.uniform1i(this.outputLocs['u_pipelineVersion'], pipelineVersion);
                         let globalIntensity = 0.0;
             if (layersArray && layersArray.length > 0) {
                 const active = layersArray.find(l => l.active) || layersArray[0];
@@ -1490,22 +1255,6 @@ vec3 encodeSRGB(vec3 linear) {
             }
             gl.uniform1f(this.outputLocs['u_lut_intensity'], globalIntensity);
             gl.uniform1f(this.outputLocs['u_lut_size'], this.lutSize || 1.0);
-            let globalSharpness = 0.0;
-            let globalGrain = 0.0;
-            if (layersArray && layersArray.length > 0) {
-                const active = layersArray.find(l => l.active) || layersArray[0];
-                if (active.engineState) {
-                    globalSharpness = active.engineState['u_sharpness'] || 0.0;
-                    globalGrain = active.engineState['u_grain'] || 0.0;
-                }
-            } else if (!this.bypassed) {
-                globalSharpness = this.state['u_sharpness'] || 0.0;
-                globalGrain = this.state['u_grain'] || 0.0;
-            }
-            gl.uniform1f(this.outputLocs['u_sharpness'], globalSharpness);
-            gl.uniform1f(this.outputLocs['u_grain'], globalGrain);
-            gl.uniform2f(this.outputLocs['u_texelSize'], 1.0 / targetW, 1.0 / targetH);
-            gl.uniform1f(this.outputLocs['u_spatialScale'], spatialScale);
             
             gl.drawArrays(gl.TRIANGLES, 0, 6);
         }

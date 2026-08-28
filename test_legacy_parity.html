@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head><title>M12 Legacy Parity Test</title></head>
+<body>
+<canvas id="cA"></canvas>
+<canvas id="cB"></canvas>
+<script type="module">
+window.runTest = async function() {
+    const { LocalLightEngine: EngineM11 } = await import('./engine_m11.js');
+    const { LocalLightEngine: EngineM12 } = await import('./engine.js');
+    
+    let results = [];
+    function log(name, pass, data={}) { results.push({ test: name, pass: pass, ...data }); }
+    
+    const W = 256; const H = 256;
+    const cA = document.getElementById('cA'); cA.width = W; cA.height = H;
+    const cB = document.getElementById('cB'); cB.width = W; cB.height = H;
+    
+    const eng11 = new EngineM11(cA);
+    const eng12 = new EngineM12(cB);
+    
+    // Create a complex gradient texture
+    const pixels = new Uint8Array(W * H * 4);
+    for (let i = 0; i < W * H * 4; i+=4) {
+        pixels[i] = (i/4) % W;
+        pixels[i+1] = Math.floor((i/4) / W);
+        pixels[i+2] = ((i/4) % W + Math.floor((i/4) / W)) % 255;
+        pixels[i+3] = 255;
+    }
+    
+    function makeTex(eng) {
+        const gl = eng.gl;
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return tex;
+    }
+    
+    eng11.originalTexture = makeTex(eng11);
+    eng12.originalTexture = makeTex(eng12);
+    
+    const complexState = {
+        u_exposure: 0.5, u_contrast: 0.2, u_highlights: -0.3, u_shadows: 0.4,
+        u_temperature: -0.2, u_tint: 0.1, u_saturation: 0.5, u_vibrance: 0.3,
+        u_sharpness: 0.5, u_clarity: 0.4, u_grain: 0.2
+    };
+    
+    const layers = [
+        { active: false, visible: true, state: { sliders: {} }, engineState: {}, blendMode: 'normal', opacity: 1.0 },
+        { active: true, visible: true, state: { sliders: {} }, engineState: {}, blendMode: 'overlay', opacity: 0.8 }
+    ];
+    
+    eng11.render(layers, W, H, null);
+    
+    eng12.pipelineVersion = 1;
+    eng12.render(layers, W, H, null);
+    
+    window.out11 = new Uint8Array(W * H * 4);
+    eng11.gl.readPixels(0, 0, W, H, eng11.gl.RGBA, eng11.gl.UNSIGNED_BYTE, out11);
+    
+    window.out12 = new Uint8Array(W * H * 4);
+    eng12.gl.readPixels(0, 0, W, H, eng12.gl.RGBA, eng12.gl.UNSIGNED_BYTE, out12);
+    
+    let maxAbsErr = 0;
+    let sumSqErr = 0;
+    for (let i = 0; i < out11.length; i++) {
+        const err = Math.abs(out11[i] - out12[i]);
+        if (err > maxAbsErr) maxAbsErr = err;
+        sumSqErr += err * err;
+    }
+    const mae = sumSqErr / out11.length;
+    
+    log("True Legacy Pixel Parity: " + out11[0] + " " + out12[0], maxAbsErr <= 1); //, maxAbsErr <= 1, { maxErr: maxAbsErr, mae: mae });
+    
+    return results;
+}
+</script>
+</body>
+</html>
+<script type="module">
+window.stObj = {u_exposure: 0.5, u_contrast: 0.2, u_highlights: -0.3, u_shadows: 0.4, u_temperature: -0.2, u_tint: 0.1, u_saturation: 0.5, u_vibrance: 0.3, u_sharpness: 0.5, u_clarity: 0.4, u_grain: 0.2}; window.runTestBisect = async function(st) {
+    const { LocalLightEngine: EngineM11 } = await import('./engine_m11.js');
+    const { LocalLightEngine: EngineM12 } = await import('./engine.js');
+    const W = 256; const H = 256;
+    const eng11 = new EngineM11(document.getElementById('cA'));
+    const eng12 = new EngineM12(document.getElementById('cB'));
+    const pixels = new Uint8Array(W * H * 4);
+    for (let i = 0; i < W * H * 4; i+=4) {
+        pixels[i] = (i/4) % W;
+        pixels[i+1] = Math.floor((i/4) / W);
+        pixels[i+2] = ((i/4) % W + Math.floor((i/4) / W)) % 255;
+        pixels[i+3] = 255;
+    }
+    function makeTex(eng) {
+        const gl = eng.gl; const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return tex;
+    }
+    eng11.originalTexture = makeTex(eng11);
+    eng12.originalTexture = makeTex(eng12);
+    
+    const layers = [
+        { active: false, visible: true, state: { sliders: st }, engineState: st, blendMode: 'normal', opacity: 1.0 },
+        { active: true, visible: true, state: { sliders: st }, engineState: st, blendMode: 'overlay', opacity: 0.8 }
+    ];
+    eng11.render(layers, W, H, null);
+    eng12.pipelineVersion = 1; eng12.render(layers, W, H, null);
+    
+    window.out11 = new Uint8Array(W * H * 4); eng11.gl.readPixels(0, 0, W, H, eng11.gl.RGBA, eng11.gl.UNSIGNED_BYTE, out11);
+    window.out12 = new Uint8Array(W * H * 4); eng12.gl.readPixels(0, 0, W, H, eng12.gl.RGBA, eng12.gl.UNSIGNED_BYTE, out12);
+    
+    let maxAbsErr = 0;
+    for (let i = 0; i < out11.length; i++) {
+        const err = Math.abs(out11[i] - out12[i]);
+        if (err > maxAbsErr) maxAbsErr = err;
+    }
+    return maxAbsErr;
+}
+</script>
