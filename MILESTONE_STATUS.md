@@ -105,10 +105,11 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 - TBD
 
 **Known limitations:**
-- TBD
+- Gaussian Blur is implemented as a 9-sample binomial approximation with 1.5 texel scaling for performance.
+- Halation calculates threshold *after* blur (`max(blur - threshold, 0)`), which acts as an acceptable soft bloom approximation rather than a strictly physical halation model.
 
 ## MILESTONE 10: Real Effects
-**Status:** IMPLEMENTED (Pending Audit)
+**Status:** VERIFIED (Passed Arbitrator Audit)
 
 **Architecture:**
 - Real-time 9-tap Gaussian blur executed on a 1/4th scale FBO (PASS 2).
@@ -128,4 +129,5 @@ Stati possibili: `PENDING` | `IMPLEMENTED` (in attesa di audit) | `VERIFIED` (ap
 - TBD
 
 **Known limitations:**
-- TBD
+- Gaussian Blur is implemented as a 9-sample binomial approximation with 1.5 texel scaling for performance.
+- Halation calculates threshold *after* blur (`max(blur - threshold, 0)`), which acts as an acceptable soft bloom approximation rather than a strictly physical halation model.
