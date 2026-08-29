@@ -1564,10 +1564,11 @@ function applyHistoryState(state) {
             mixState: state.mixState || JSON.parse(JSON.stringify(mixState)),
             activeLut: state.activeLut || 'none'
         };
+        engine.pipelineVersion = 1; // M13: Ensure legacy projects restore to V1
     } else {
         layers = JSON.parse(JSON.stringify(state.layers));
         activeLayerIndex = state.activeLayerIndex;
-    engine.pipelineVersion = state.pipelineVersion || 1;
+        engine.pipelineVersion = state.pipelineVersion || 1;
     }
     
     if (typeof renderLayersList === 'function') renderLayersList();
